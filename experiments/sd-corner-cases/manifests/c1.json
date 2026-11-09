@@ -1,0 +1,144 @@
+{
+ "_comment": "C1 hub shadow: 2 hubs advertise common + every solo + late-solo id",
+ "module": {
+  "_comment": [
+   "Override without editing this file:",
+   "  DELIVERY_MODULE_REF=<branch|tag|full-sha>  DELIVERY_MODULE_REV=<full-sha>",
+   "and likewise DELIVERY_*, LIBP2P_MODULE_*, OPENMETRICS_MODULE_*,",
+   "LOGOSCORE_CLI_* for the dependencies this module otherwise chooses.",
+   "A branch is not a pin: out/resolved.json records the commit it resolved to."
+  ],
+  "flake": "git+https://github.com/logos-co/logos-delivery-module",
+  "ref": "master"
+ },
+ "overrides": {
+  "_comment": [
+   "Only what the chosen module ref cannot supply, or what we deliberately",
+   "differ on. master pins libp2p_module, openmetrics-module and",
+   "logos-delivery in its flake lock, so those are derived.",
+   "logos-logoscore-cli is not the module's own input: its lock only carries",
+   "copies pulled in by other inputs (libp2p_module, logos-test-modules), and",
+   "its docker-compose runs yet another. The harness keeps running 665ac28b,",
+   "the version every recorded run used. `harness.sh resolve` shows each source."
+  ],
+  "logos-logoscore-cli": {
+   "flake": "github:logos-co/logos-logoscore-cli",
+   "rev": "665ac28bc77f45e3c610f40fef975a12609de531"
+  }
+ },
+ "network": {
+  "subnet": "10.0.0.0/8",
+  "clusterId": 42,
+  "shardsInNetwork": 1
+ },
+ "groups": [
+  {
+   "name": "boot",
+   "role": "bootstrap",
+   "kind": "sd-agent",
+   "count": 1,
+   "startAfter": 0,
+   "ip": "10.0.0.10",
+   "nodekey": "9999999999999999999999999999999999999999999999999999999999999999",
+   "env": {
+    "P2P_MAX_CONNS": "400"
+   }
+  },
+  {
+   "name": "hub",
+   "role": "member",
+   "kind": "sd-agent",
+   "count": 2,
+   "startAfter": 0,
+   "jitter": 20,
+   "env": {
+    "SD_ADVERTISE": "sd/common,sd/solo-[1-40],sd/late-solo-[1-2]"
+   }
+  },
+  {
+   "name": "solo",
+   "role": "member",
+   "kind": "sd-agent",
+   "count": 40,
+   "startAfter": 0,
+   "jitter": 20,
+   "env": {
+    "SD_ADVERTISE": "sd/solo-{i}"
+   }
+  },
+  {
+   "name": "ctrl",
+   "role": "member",
+   "kind": "sd-agent",
+   "count": 20,
+   "startAfter": 0,
+   "jitter": 20,
+   "env": {
+    "SD_ADVERTISE": "sd/ctrl-{i}"
+   }
+  },
+  {
+   "name": "late-solo",
+   "role": "member",
+   "kind": "sd-agent",
+   "count": 2,
+   "startAfter": 1200,
+   "jitter": 0,
+   "env": {
+    "SD_ADVERTISE": "sd/late-solo-{i}"
+   }
+  },
+  {
+   "name": "late-ctrl",
+   "role": "member",
+   "kind": "sd-agent",
+   "count": 2,
+   "startAfter": 1200,
+   "jitter": 0,
+   "env": {
+    "SD_ADVERTISE": "sd/late-ctrl-{i}"
+   }
+  },
+  {
+   "name": "lookers",
+   "role": "member",
+   "kind": "sd-agent",
+   "count": 6,
+   "startAfter": 0,
+   "jitter": 20,
+   "env": {
+    "SD_LOOKUP": "sd/common",
+    "SD_LOOKUP_ROTATE": "sd/solo-[1-40],sd/ctrl-[1-20],sd/late-solo-[1-2],sd/late-ctrl-[1-2]",
+    "SD_LOOKUP_PER_CYCLE": "4",
+    "SD_LOOKUP_INTERVAL": "20",
+    "SD_LOOKUP_PARALLEL": "0"
+   }
+  },
+  {
+   "name": "lookers-par",
+   "role": "member",
+   "kind": "sd-agent",
+   "count": 4,
+   "startAfter": 0,
+   "jitter": 20,
+   "env": {
+    "SD_LOOKUP": "sd/common",
+    "SD_LOOKUP_ROTATE": "sd/ctrl-[1-20],sd/solo-[1-40],sd/late-ctrl-[1-2],sd/late-solo-[1-2]",
+    "SD_LOOKUP_PER_CYCLE": "4",
+    "SD_LOOKUP_INTERVAL": "20"
+   }
+  },
+  {
+   "name": "delivery",
+   "role": "member",
+   "kind": "delivery-module",
+   "count": 10,
+   "startAfter": 0,
+   "jitter": 20,
+   "config": "member.json.tpl",
+   "env": {
+    "LOOKUP_INTERVAL": "15"
+   }
+  }
+ ]
+}

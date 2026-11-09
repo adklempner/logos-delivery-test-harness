@@ -1,0 +1,172 @@
+{
+ "_comment": "C2 flapping advertisers of common-a; common-b is the in-run control",
+ "module": {
+  "_comment": [
+   "Override without editing this file:",
+   "  DELIVERY_MODULE_REF=<branch|tag|full-sha>  DELIVERY_MODULE_REV=<full-sha>",
+   "and likewise DELIVERY_*, LIBP2P_MODULE_*, OPENMETRICS_MODULE_*,",
+   "LOGOSCORE_CLI_* for the dependencies this module otherwise chooses.",
+   "A branch is not a pin: out/resolved.json records the commit it resolved to."
+  ],
+  "flake": "git+https://github.com/logos-co/logos-delivery-module",
+  "ref": "master"
+ },
+ "overrides": {
+  "_comment": [
+   "Only what the chosen module ref cannot supply, or what we deliberately",
+   "differ on. master pins libp2p_module, openmetrics-module and",
+   "logos-delivery in its flake lock, so those are derived.",
+   "logos-logoscore-cli is not the module's own input: its lock only carries",
+   "copies pulled in by other inputs (libp2p_module, logos-test-modules), and",
+   "its docker-compose runs yet another. The harness keeps running 665ac28b,",
+   "the version every recorded run used. `harness.sh resolve` shows each source."
+  ],
+  "logos-logoscore-cli": {
+   "flake": "github:logos-co/logos-logoscore-cli",
+   "rev": "665ac28bc77f45e3c610f40fef975a12609de531"
+  }
+ },
+ "network": {
+  "subnet": "10.0.0.0/8",
+  "clusterId": 42,
+  "shardsInNetwork": 1
+ },
+ "groups": [
+  {
+   "name": "boot",
+   "role": "bootstrap",
+   "kind": "sd-agent",
+   "count": 1,
+   "startAfter": 0,
+   "ip": "10.0.0.10",
+   "nodekey": "9999999999999999999999999999999999999999999999999999999999999999",
+   "env": {
+    "P2P_MAX_CONNS": "400"
+   }
+  },
+  {
+   "name": "common-a",
+   "role": "member",
+   "kind": "sd-agent",
+   "count": 35,
+   "startAfter": 0,
+   "jitter": 20,
+   "env": {
+    "SD_ADVERTISE": "sd/common-a"
+   }
+  },
+  {
+   "name": "common-b",
+   "role": "member",
+   "kind": "sd-agent",
+   "count": 35,
+   "startAfter": 0,
+   "jitter": 20,
+   "env": {
+    "SD_ADVERTISE": "sd/common-b"
+   }
+  },
+  {
+   "name": "flap-fast",
+   "role": "member",
+   "kind": "sd-agent",
+   "count": 1,
+   "startAfter": 0,
+   "jitter": 20,
+   "env": {
+    "SD_FLAP": "sd/common-a:5:5"
+   }
+  },
+  {
+   "name": "flap-mid",
+   "role": "member",
+   "kind": "sd-agent",
+   "count": 1,
+   "startAfter": 0,
+   "jitter": 20,
+   "env": {
+    "SD_FLAP": "sd/common-a:30:10"
+   }
+  },
+  {
+   "name": "flap-slow",
+   "role": "member",
+   "kind": "sd-agent",
+   "count": 1,
+   "startAfter": 0,
+   "jitter": 20,
+   "env": {
+    "SD_FLAP": "sd/common-a:120:30"
+   }
+  },
+  {
+   "name": "late-a-12",
+   "role": "member",
+   "kind": "sd-agent",
+   "count": 3,
+   "startAfter": 720,
+   "jitter": 0,
+   "env": {
+    "SD_ADVERTISE": "sd/common-a"
+   }
+  },
+  {
+   "name": "late-b-12",
+   "role": "member",
+   "kind": "sd-agent",
+   "count": 3,
+   "startAfter": 720,
+   "jitter": 0,
+   "env": {
+    "SD_ADVERTISE": "sd/common-b"
+   }
+  },
+  {
+   "name": "late-a-25",
+   "role": "member",
+   "kind": "sd-agent",
+   "count": 3,
+   "startAfter": 1500,
+   "jitter": 0,
+   "env": {
+    "SD_ADVERTISE": "sd/common-a"
+   }
+  },
+  {
+   "name": "late-b-25",
+   "role": "member",
+   "kind": "sd-agent",
+   "count": 3,
+   "startAfter": 1500,
+   "jitter": 0,
+   "env": {
+    "SD_ADVERTISE": "sd/common-b"
+   }
+  },
+  {
+   "name": "lookers",
+   "role": "member",
+   "kind": "sd-agent",
+   "count": 8,
+   "startAfter": 0,
+   "jitter": 20,
+   "env": {
+    "SD_LOOKUP": "sd/common-a,sd/common-b",
+    "SD_LOOKUP_INTERVAL": "15",
+    "SD_LOOKUP_PARALLEL": "0"
+   }
+  },
+  {
+   "name": "delivery",
+   "role": "member",
+   "kind": "delivery-module",
+   "count": 6,
+   "startAfter": 0,
+   "jitter": 20,
+   "config": "member.json.tpl",
+   "env": {
+    "LOOKUP_INTERVAL": "15"
+   }
+  }
+ ]
+}
