@@ -62,7 +62,8 @@ ROLES = ("bootstrap", "member")
 NATIVE = "logosdeliverynode"  # the delivery node binary, in-process kademlia
 MODULE_NODE = "delivery-module"  # logoscore + delivery_module + libp2p_module
 DEMO_NODE = "delivery-demo"  # the logos-delivery-demo UI, viewable over noVNC
-KINDS = (NATIVE, MODULE_NODE, DEMO_NODE)
+AGENT_NODE = "sd-agent"  # logoscore + libp2p_module only, driven by docker/sd_agent.py
+KINDS = (NATIVE, MODULE_NODE, DEMO_NODE, AGENT_NODE)
 DEFAULT_KIND = {"bootstrap": NATIVE, "member": MODULE_NODE}
 
 # Ports inside every container. A native node listens on its tcp port and is

@@ -149,7 +149,7 @@ cmd_up() {
   cmd_gen
   # Traces are a bind mount and the members append to them, so a leftover file
   # would carry the previous run's lookups into this run's report.
-  rm -f "$out"/traces/*.trace "$out"/traces/*.msg.jsonl "$out"/traces/*.send.jsonl
+  rm -f "$out"/traces/*.trace "$out"/traces/*.msg.jsonl "$out"/traces/*.send.jsonl "$out"/traces/*.sd.jsonl
   : > "$out/run.log"
 
   runlog "manifest $MANIFEST"
@@ -320,7 +320,8 @@ cmd_collect() {
   dc logs --no-color 2>/dev/null | sed -n 's/.*\[harness /[harness /p' > "$dir/stages.txt"
   cp "$out"/traces/*.trace "$dir/" 2>/dev/null || true
   cp "$out"/traces/*.msg.jsonl "$out"/traces/*.send.jsonl "$dir/" 2>/dev/null || true
-  cp "$out/run.log" "$out/plan.json" "$out/resolved.json" "$dir/" 2>/dev/null || true
+  cp "$out"/traces/*.sd.jsonl "$dir/" 2>/dev/null || true  # sd-agent event logs
+  cp "$out/run.log" "$out/plan.json" "$out/resolved.json" "$out/t0" "$dir/" 2>/dev/null || true
   "$here/promq.sh" up > "$dir/q_up.json" 2>&1 || true
   "$here/promq.sh" logos_delivery_connected_peers_per_shard > "$dir/q_peers.json" 2>&1 || true
   # Relay connections per node, both directions: the one peer figure both kinds
