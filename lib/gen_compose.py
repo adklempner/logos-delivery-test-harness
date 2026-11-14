@@ -98,7 +98,7 @@ def _native_service(g, name, ip, port, net_conf, join, depends_on):
 """
 
 
-def _module_service(g, name, ip, net_conf, join, depends_on):
+def _module_service(g, name, ip, net_conf, join, depends_on, rln=None):
     """A logoscore daemon hosting delivery_module, as a bootstrap or a member.
     A bootstrap carries a fixed libp2p key, so its DHT address is known ahead."""
     env = {
@@ -114,6 +114,12 @@ def _module_service(g, name, ip, net_conf, join, depends_on):
     if g["role"] == "bootstrap":
         env["LIBP2P_PRIVKEY"] = manifest.libp2p_privkey(g)
     env.update({k: str(v) for k, v in g["env"].items()})
+    lez_volume = ""
+    if env.get("RLN") == "1":
+        # The registry id and the funding requests pass through out/lez.
+        env.setdefault("LEZ_RLN_SEQUENCER", manifest.lez_sequencer_url())
+        env.setdefault("RLN_EPOCH", str(rln["epochSizeSec"]))
+        lez_volume = "\n      - ./out/lez:/lez"
     envblock = "\n".join(f"      {k}: \"{v}\"" for k, v in env.items())
     health = ""
     if g["role"] == "bootstrap":
@@ -137,11 +143,47 @@ def _module_service(g, name, ip, net_conf, join, depends_on):
     environment:
 {envblock}
 {_depends(depends_on)}    volumes:
-      - ./out/traces:/traces
+      - ./out/traces:/traces{lez_volume}
     networks:
       sim:
         ipv4_address: {ip}
 {health}"""
+
+
+def _lez_services(rln):
+    """The local LEZ chain of an RLN run: lez-init mints the payer the chain
+    funds at genesis, the sequencer starts on the config that names it, and
+    lez-setup deploys the RLN registry and then funds the nodes (docker/lez.py)."""
+    def tool(name, mode, ip, depends):
+        return f"""  {name}:
+    image: logos-sim-lez:local
+    command: ["{mode}"]
+    environment:
+      LEZ_RLN_SEQUENCER: "{manifest.lez_sequencer_url()}"
+    volumes:
+      - ./out/lez:/lez
+{depends}    networks:
+      sim:
+        ipv4_address: {ip}
+"""
+    return [
+        tool("lez-init", "init", "10.0.0.14", ""),
+        f"""  lez-sequencer:
+    image: {rln["sequencerImage"]}
+    volumes:
+      - ./out/lez/seq:/etc/sequencer_service:ro
+    depends_on:
+      lez-init:
+        condition: service_completed_successfully
+    networks:
+      sim:
+        ipv4_address: {manifest.LEZ_SEQUENCER_IP}
+""",
+        tool("lez-setup", "setup", "10.0.0.15", """    depends_on:
+      lez-sequencer:
+        condition: service_started
+"""),
+    ]
 
 
 def _demo_service(g, name, ip, net_conf, join, depends_on, paths, vnc_port):
@@ -224,7 +266,8 @@ def generate(m, compose_path, targets_path, plan_path):
             if g["kind"] != NATIVE:
                 g["env"].setdefault("MIXNODES", mixnodes)
 
-    services, targets, plan = [], [], []
+    rln = m.get("rln")
+    services, targets, plan = (_lez_services(rln) if rln else []), [], []
     member_no = 0
     joins = {}  # member service -> the bootstrap service it joins through
     demo_paths = _demo_paths(compose_path) if manifest.uses_demo(m) else None
@@ -238,7 +281,7 @@ def generate(m, compose_path, targets_path, plan_path):
             if g["kind"] == NATIVE:
                 services.append(_native_service(g, name, ip, g["port"], net_conf, join, dep))
             else:
-                services.append(_module_service(g, name, ip, net_conf, join, dep))
+                services.append(_module_service(g, name, ip, net_conf, join, dep, rln))
             targets.append(_target(g, name, ip))
             names.append(name)
         else:
@@ -274,7 +317,7 @@ def generate(m, compose_path, targets_path, plan_path):
                     names.append(name)
                     continue
                 else:
-                    services.append(_module_service(g, name, ip, net_conf, join, dep))
+                    services.append(_module_service(g, name, ip, net_conf, join, dep, rln))
                 targets.append(_target(g, name, ip))
                 names.append(name)
         step = {

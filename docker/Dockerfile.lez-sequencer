@@ -1,0 +1,33 @@
+# The standalone LEZ sequencer, built from the logos-execution-zone source for
+# the host's own platform. Build context: a checkout of that repository.
+#
+# Upstream's lez/sequencer/service/Dockerfile does the same on top of a risc0
+# toolchain image, which exists prebuilt for linux/amd64 only -- and the amd64
+# sequencer spins at start-up under Rosetta on Apple silicon. The sequencer
+# executes its guest programs in-process (`prove`), from the ELFs the
+# repository ships, so neither that toolchain nor r0vm is needed here.
+FROM rust:1.98.1-slim-trixie AS builder
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential pkg-config libssl-dev libclang-dev clang cmake ninja-build git curl unzip ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+COPY . .
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/src/target \
+    cargo build --release --features prove,standalone --bin sequencer_service && \
+    cp target/release/sequencer_service /usr/local/bin/sequencer_service
+
+FROM debian:trixie-slim
+RUN apt-get update && apt-get install -y --no-install-recommends curl && \
+    rm -rf /var/lib/apt/lists/*
+RUN useradd -m -u 1000 -s /bin/bash sequencer_service_user && \
+    mkdir -p /sequencer_service /etc/sequencer_service /var/lib/sequencer_service && \
+    chown -R sequencer_service_user:sequencer_service_user \
+      /sequencer_service /etc/sequencer_service /var/lib/sequencer_service
+COPY --from=builder /usr/local/bin/sequencer_service /usr/local/bin/sequencer_service
+ENV RUST_LOG=info
+USER sequencer_service_user
+WORKDIR /sequencer_service
+EXPOSE 3040
+CMD ["sequencer_service", "/etc/sequencer_service/sequencer_config.json"]

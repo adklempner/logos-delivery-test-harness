@@ -26,6 +26,8 @@
 #   BUILDER_IMAGE      nix builder image        (default: nixos/nix:2.24.9)
 #   NIX_VOLUME         builder's nix store      (default: logos-harness-nix)
 #   IMAGE              runtime image to build   (default: logos-sim:local)
+#   LEZ_REF            logos-execution-zone tag the RLN sequencer is built from
+#                                               (default: v0.3.2)
 #   PYTHON             interpreter              (default: python3)
 #:end
 set -euo pipefail
@@ -35,6 +37,7 @@ MANIFEST=${HARNESS_MANIFEST:-$here/harness.json}
 BUILDER_IMAGE=${BUILDER_IMAGE:-nixos/nix:2.24.9}
 NIX_VOLUME=${NIX_VOLUME:-logos-harness-nix}
 IMAGE=${IMAGE:-logos-sim:local}
+LEZ_REF=${LEZ_REF:-v0.3.2}
 PY=${PYTHON:-python3}
 
 out=$here/out
@@ -89,6 +92,8 @@ cmd_build() {
   demo=$($PY -c "import json;print('logos-delivery-demo' in json.load(open('$out/resolved.json'))['components'])")
   [ "$demo" = True ] && $PY "$here/lib/demo_paths.py" "$out"
 
+  [ "$($PY -c "import manifest;print(manifest.uses_rln(manifest.load('$MANIFEST')))")" = True ] && build_lez
+
   if [ "${1:-}" = "--no-image" ]; then
     log "skipping the image build"
     return
@@ -100,6 +105,39 @@ cmd_build() {
     docker build -t logos-sim-demo:local --build-arg BASE="$IMAGE" \
       -f "$here/docker/Dockerfile.demo" "$here"
   fi
+}
+
+# What an RLN run adds to the nix builds: the local LEZ chain. Each piece is
+# built once and kept; remove the image (or out/lez-tools) to build it again.
+build_lez() {
+  local seq
+  seq=$($PY -c "import manifest;print(manifest.load('$MANIFEST')['rln']['sequencerImage'])")
+  # The standalone sequencer, from source for this host's platform (see
+  # docker/Dockerfile.lez-sequencer). A manifest naming another image brings its own.
+  if [ "$seq" = logos-sim-lez-sequencer:local ] && ! docker image inspect "$seq" >/dev/null 2>&1; then
+    log "docker build $seq from logos-execution-zone $LEZ_REF"
+    [ -d "$out/lez-src/logos-execution-zone/.git" ] ||
+      git clone -q --depth 1 --branch "$LEZ_REF" \
+        https://github.com/logos-blockchain/logos-execution-zone.git "$out/lez-src/logos-execution-zone"
+    docker build -t "$seq" -f "$here/docker/Dockerfile.lez-sequencer" "$out/lez-src/logos-execution-zone"
+  fi
+  # logos-lez-rln's guest programs and tools (docker/build-lez.sh): the guest
+  # programs as linux/amd64, with the docker socket; the tools natively.
+  if [ ! -x "$out/lez-tools/lez-rln/target/release/run_setup" ]; then
+    local platform
+    for platform in linux/amd64 ""; do
+      log "building logos-lez-rln's ${platform:+guest programs ($platform)}${platform:-tools}"
+      docker build -q ${platform:+--platform $platform} -t logos-sim-lez-build:local \
+        -f "$here/docker/Dockerfile.lez-build" "$here/docker"
+      docker run --rm ${platform:+--platform $platform} \
+        -v logos-harness-lez-build:/work -v "$out:/out" \
+        -v "$here/docker/build-lez.sh:/build-lez.sh:ro" \
+        -v /var/run/docker.sock:/var/run/docker.sock \
+        logos-sim-lez-build:local bash /build-lez.sh "${platform:+guest}${platform:-tools}"
+    done
+  fi
+  log "docker build logos-sim-lez:local"
+  docker build -q -t logos-sim-lez:local -f "$here/docker/Dockerfile.lez" "$here"
 }
 
 cmd_gen() {
@@ -120,6 +158,13 @@ import json;print(json.load(open('$out/resolved.json'))['module'])")"
 
   runlog "starting monitoring"
   dc up -d prometheus grafana >/dev/null
+  # An RLN manifest: the local LEZ chain, from a clean out/lez. Nodes with RLN=1
+  # wait for the registry it deploys, so it is not part of the schedule.
+  if grep -q '^  lez-setup:' "$out/compose.groups.yml"; then
+    rm -rf "$out/lez"; mkdir -p "$out/lez"
+    runlog "starting the LEZ chain (lez-init, lez-sequencer, lez-setup)"
+    dc up -d lez-setup >/dev/null
+  fi
 
   # Groups at offset 0 go first; the bootstraps among them gate the rest,
   # because a member cannot join before its bootstrap answers.
@@ -297,6 +342,9 @@ print('\\n'.join(s for g in json.load(open('$out/plan.json')) if g['role']=='boo
     } | sort -u)
   fi
   for s in $keep; do dc logs --no-color "$s" > "$dir/$s.log" 2>&1; done
+  for s in $(dc ps -a --format '{{.Service}}' | grep '^lez-'); do
+    dc logs --no-color "$s" > "$dir/$s.log" 2>&1
+  done
   # What each running demo shows, through its inspector (never published).
   for s in $($PY -c "
 import json

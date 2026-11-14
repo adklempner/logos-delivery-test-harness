@@ -83,7 +83,7 @@ def resolve(m, lock_path, out_path):
         else module_ref
     )
 
-    for comp, output in manifest.OUTPUTS.items():
+    for comp, output in manifest.outputs(m).items():
         if comp == manifest.MODULE:
             resolved[comp] = {
                 "flake": module_pinned,

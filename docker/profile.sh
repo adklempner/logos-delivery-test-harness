@@ -38,8 +38,28 @@ mixnodes=""
 # an older one refuses the unknown key.
 mixallow=""
 [ "${MIX_ALLOW_ALL:-0}" = 1 ] && mixallow='"mix-allow-all-addresses": true,'
+# RLN=1: Relay RLN on the registry the lez-setup service deployed on the local
+# LEZ chain (a manifest with an "rln" section). RLN has no config key: it comes
+# from the presets file, whose one entry replaces the module's built-in settings
+# for this node's preset -- "" for a profile that names none. The daemon reads
+# LOGOS_DELIVERY_RLN_PRESETS and LEZ_RLN_SEQUENCER, so both are set before it starts.
+rlnregistry=""
+if [ "${RLN:-0}" = 1 ]; then
+  n=0
+  until [ -s /lez/registry-id ]; do
+    sleep 1; n=$((n + 1))
+    if [ "$n" -ge "${RLN_SETUP_TIMEOUT:-600}" ]; then
+      log "RLN FAILED: no registry from lez-setup within ${RLN_SETUP_TIMEOUT:-600}s"; exit 1
+    fi
+  done
+  rlnregistry=$(cat /lez/registry-id)
+  validate=true; [ "${RLN_VALIDATE:-1}" = 1 ] || validate=false
+  export LOGOS_DELIVERY_RLN_PRESETS=/data/rln-presets.json
+  printf '{"%s": {"enabled": true, "registry-id": "%s", "epoch-size-sec": %s, "enable-validation": %s}}\n' \
+    "${RLN_PRESET:-}" "$rlnregistry" "${RLN_EPOCH:-10}" "$validate" > "$LOGOS_DELIVERY_RLN_PRESETS"
+fi
 sed -e "s|@IP@|$IP|g" -e "s|@BOOTSTRAPS@|$bootstraps|g" -e "s|@LOOKUP@|$LOOKUP|g" \
-    -e "s|@MIX_ALLOW_ALL@|$mixallow|g" \
+    -e "s|@MIX_ALLOW_ALL@|$mixallow|g" -e "s|@RLN_REGISTRY@|$rlnregistry|g" \
     -e "s|@MIXNODES@|$mixnodes|g" -e "s|@ANONYMITY@|${ANONYMITY_LEVEL:-Preferred}|g" \
     -e "s|@CLUSTER@|$CLUSTER_ID|g" -e "s|@SHARDS@|$NUM_SHARDS|g" \
     -e "s|@TCP_PORT@|$TCP_PORT|g" \

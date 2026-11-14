@@ -17,11 +17,19 @@ NIX_CONF = """mkdir -p /etc/nix
   echo "extra-substituters = https://cache.nix.logos.co/public https://cache.nix.logos.co/ci"
   echo "extra-trusted-public-keys = public:l4HrXgL4nw246+LBh2SOJyhz64BoGegOYLheT/iIAPU= ci:aVJqjS4NWX5WfqHO0AEhIScjGu/JyK5FoydPrnEbMvc="
   echo "fallback = true"
+  # A cache that does not answer costs this long per lookup before nix builds
+  # from source instead.
+  echo "connect-timeout = 5"
 } > /etc/nix/nix.conf
 """
 
 # Components whose `modules/` directory is copied into the image's module dir.
-MODULE_COMPONENTS = ["libp2p_module", "openmetrics-module", "logos-delivery-module"]
+# The RLN ones are resolved only for a manifest with an "rln" section.
+MODULE_COMPONENTS = [
+    "libp2p_module", "openmetrics-module",
+    "liblogos_lez_rln_module", "liblogos_rln_module",
+    "logos-delivery-module",
+]
 
 
 # The demo runs straight from the nix volume rather than from a copy in an image
@@ -91,8 +99,20 @@ def generate(resolved, out_path):
         return f'--override-input logos-delivery "{dv["flake"]}" '
 
     build("logos-logoscore-cli", "/tmp/r-core")
-    for i, key in enumerate(MODULE_COMPONENTS):
+    def lez_override():
+        """Build liblogos_rln_module against the liblogos_lez_rln_module built here.
+
+        Its flake names that input by branch, so a standalone build would take
+        whatever the branch points at today and compile a second LEZ wallet for
+        it. The delivery module's flake pins the input the same way.
+        """
+        return f'--override-input liblogos_lez_rln_module "{comps["liblogos_lez_rln_module"]["flake"]}" '
+
+    modules = [k for k in MODULE_COMPONENTS if k in comps]
+    for i, key in enumerate(modules):
         extra = delivery_override() if key == "logos-delivery-module" else ""
+        if key == "liblogos_rln_module":
+            extra = lez_override()
         build(key, f"/tmp/r-{i}", extra)
     build("logos-delivery", "/tmp/r-seed")
     if manifest.DEMO in comps:
@@ -106,7 +126,7 @@ def generate(resolved, out_path):
         "mkdir -p /out/modules",
         "cp -rL /tmp/r-core/modules/. /out/modules/",
     ]
-    for i, _ in enumerate(MODULE_COMPONENTS):
+    for i, _ in enumerate(modules):
         lines.append(f"cp -rL /tmp/r-{i}/modules/. /out/modules/")
     lines += [
         "mkdir -p /out/seed-store",

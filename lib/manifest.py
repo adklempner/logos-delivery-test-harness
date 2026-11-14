@@ -17,6 +17,14 @@ OUTPUTS = {
     "logos-delivery": "logosdeliverynode",
 }
 
+# Built on top of those for a manifest with an "rln" section: the RLN module
+# delivery_module calls, and the LEZ registry provider that one calls. Both are
+# nodes of the module's lock, like libp2p_module.
+RLN_OUTPUTS = {
+    "liblogos_lez_rln_module": "install-portable",
+    "liblogos_rln_module": "install-portable",
+}
+
 MODULE = "logos-delivery-module"
     ## The one component that is a pin rather than a lock entry.
 
@@ -34,7 +42,12 @@ ENV_PREFIX = {
 
 INFRA_HOSTS = 256  # first addresses of the subnet: bootstraps, prometheus, grafana
 # Fixed in docker-compose.yml; a bootstrap placed here would collide.
-RESERVED_IPS = {"10.0.0.11": "prometheus", "10.0.0.12": "grafana"}
+RESERVED_IPS = {
+    "10.0.0.11": "prometheus", "10.0.0.12": "grafana",
+    "10.0.0.13": "lez-sequencer", "10.0.0.14": "lez-init", "10.0.0.15": "lez-setup",
+}
+LEZ_SEQUENCER_IP = "10.0.0.13"
+LEZ_SEQUENCER_PORT = 3040
 
 # secp256k1, for deriving a bootstrap's peer id from its nodekey.
 _P = 2**256 - 2**32 - 977
@@ -192,6 +205,13 @@ def load(path):
     net.setdefault("clusterId", 42)
     net.setdefault("shardsInNetwork", 1)
 
+    # "rln": {} (or with overrides) turns the local LEZ chain and its RLN
+    # registry on; a group then opts in with env RLN=1.
+    if m.get("rln") is not None:
+        rln = m["rln"] = {k: v for k, v in m["rln"].items() if not k.startswith("_")}
+        rln.setdefault("epochSizeSec", 10)
+        rln.setdefault("sequencerImage", "logos-sim-lez-sequencer:local")
+
     groups = m.get("groups") or []
     if not groups:
         _fail("manifest.groups is empty")
@@ -251,6 +271,13 @@ def load(path):
                     f"group '{g['name']}' is on {_network(g)}, its bootstrap '{b}' "
                     f"on {_network(boot)}"
                 )
+
+    for g in groups:
+        if str(g["env"].get("RLN", "0")) == "1":
+            if not m.get("rln"):
+                _fail(f"group '{g['name']}': env RLN=1 needs an \"rln\" section in the manifest")
+            if g["kind"] != MODULE_NODE:
+                _fail(f"group '{g['name']}': RLN runs on {MODULE_NODE} nodes only")
 
     # Overrides carry a _comment key for humans; drop it.
     overrides = {
@@ -400,6 +427,21 @@ def _network(g):
     """What a node must share with the bootstrap it joins."""
     preset = _native_preset(g)
     return f"preset {preset}" if preset else f"cluster {g['clusterId']}"
+
+
+def lez_sequencer_url():
+    return f"http://{LEZ_SEQUENCER_IP}:{LEZ_SEQUENCER_PORT}/"
+
+
+def uses_rln(m):
+    """A manifest with an "rln" section runs a local LEZ chain with an RLN
+    registry on it, and builds the RLN modules into the image."""
+    return bool(m.get("rln"))
+
+
+def outputs(m):
+    """Component -> flake output, for everything this manifest builds."""
+    return {**OUTPUTS, **(RLN_OUTPUTS if uses_rln(m) else {})}
 
 
 def uses_demo(m):
