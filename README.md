@@ -267,6 +267,49 @@ logosdeliverynode nodes write no discovery trace and no stage log, so `report`
 and the `module lost` watchdog cover delivery-module nodes only; `collect` keeps
 every logosdeliverynode's log instead, and Prometheus scrapes both kinds.
 
+### RLN on a local LEZ chain
+
+A manifest with an `"rln"` section runs a local LEZ chain next to the fleet and
+deploys an RLN registry on it; without the section nothing changes. A
+`delivery-module` group takes part with `RLN=1` in its `env` (a
+`logosdeliverynode` cannot: it has no LEZ RLN backend).
+
+```json
+"rln": {},
+"groups": [
+  { "name": "members", "role": "member", "count": 2, "env": { "RLN": "1" } }
+]
+```
+
+| Key / env | Default | Meaning |
+|---|---|---|
+| `rln.epochSizeSec`, `rln.maxEpochGap` | `10`, `3` | The RLN epoch and window of every node's preset. These are the Mix profile's; Mix RLN refuses to start on others. |
+| `rln.sequencerImage` | `logos-sim-lez-sequencer:local` | The standalone LEZ sequencer. The default is built by `harness.sh build`. |
+| `RLN=1` | off | Relay RLN: the node validates proofs, registers a membership and attaches proofs to what it sends. |
+| `RLN_MEMBERSHIP=0` | `1` | No membership: the node validates, and its sends end in `messageError`. |
+| `RLN_VALIDATE=0` | `1` | Attach proofs without validating incoming ones. |
+| `MIX_RLN=1` | off | Per-hop Mix proofs from the same registry (needs `RLN=1` and a flat-shape profile: `mixnode.json.tpl`, `member-mix-static.json.tpl`). |
+
+What runs: `lez-init` mints the payer the chain funds at genesis, `lez-sequencer`
+produces blocks, `lez-setup` deploys the registry and then funds each node's LEZ
+payer on request (`docker/lez.py`). A node with `RLN=1` waits for the registry,
+reaches RLN `Ready`, is funded, and starts once its membership is `active` --
+about a minute after T0 for the first nodes, so give `SEND_AFTER` no less than 30.
+
+`harness.sh build` with such a manifest also builds the two RLN modules, the
+sequencer (from the logos-execution-zone source, tag `LEZ_REF`) and
+logos-lez-rln's tools. The first build takes over an hour; the results are kept
+(`out/lez-tools`, the images, the `logos-harness-lez-build` volume).
+
+A mix node as a `delivery-module` node is a bootstrap-role group with
+`"config": "mixnode.json.tpl"` and `NODEKEY` / `MIXKEY` in its `env`; like the
+native ones with `--mixkey`, it is handed to the other module nodes as `MIXNODES`.
+
+- `examples/rln-smoke.json`: a sender with a membership (all received) and one
+  without (every send a `messageError`), so its verdict is FAIL by design.
+- `examples/mix-rln-smoke.json`: mix over the RLN network, 4 module mix nodes.
+  Each message is missing at one mix node, its exit (see the exit-node caveat).
+
 ### Joining a public network
 
 Members can join logos.dev or logos.test instead of, or alongside, a local

@@ -161,7 +161,7 @@ import json;print(json.load(open('$out/resolved.json'))['module'])")"
   # An RLN manifest: the local LEZ chain, from a clean out/lez. Nodes with RLN=1
   # wait for the registry it deploys, so it is not part of the schedule.
   if grep -q '^  lez-setup:' "$out/compose.groups.yml"; then
-    rm -rf "$out/lez"; mkdir -p "$out/lez"
+    rm -rf "$out/lez"; mkdir -p "$out/lez/pub"
     runlog "starting the LEZ chain (lez-init, lez-sequencer, lez-setup)"
     dc up -d lez-setup >/dev/null
   fi

@@ -6,11 +6,13 @@
   lez.py setup   once the sequencer answers: deploy an RLN registry, publish its
                  id, then fund every account a node asks for
 
-Everything shared goes through /lez (out/lez on the host):
+State lives in /lez (out/lez on the host). The wallet that holds the payer's
+key (home/) stays with these two services; the sequencer mounts seq/ only, and
+the nodes pub/ only:
   seq/sequencer_config.json  the sequencer's config            (init)
-  registry-id                logos:local:<hex>, what a node's RLN preset names (setup)
-  fund/<node>                written by a node: the LEZ account to fund
-  funded/<node>              written here: "ok", or the error
+  pub/registry-id            logos:local:<hex>, what a node's RLN preset names (setup)
+  pub/fund/<node>            written by a node: the LEZ account to fund
+  pub/funded/<node>          written here: "ok", or the error
 
 The recipe is logos-delivery-module's tests/e2e (conftest.py lez_registry).
 """
@@ -24,6 +26,7 @@ import urllib.request
 
 LEZ = "/lez"
 HOME = f"{LEZ}/home"
+PUB = f"{LEZ}/pub"
 TOOLS = "/opt/lez-rln"
 SEQUENCER = os.environ.get("LEZ_RLN_SEQUENCER", "http://lez-sequencer:3040/")
 # LEZ's CLOCK_50 account and its clock shard, with the timestamp in ms at bytes
@@ -79,6 +82,29 @@ def b58_hex(text):
     return n.to_bytes(32, "big").hex()
 
 
+def b58(hex_id):
+    raw = bytes.fromhex(hex_id)
+    n, out = int.from_bytes(raw, "big"), ""
+    while n:
+        n, r = divmod(n, 58)
+        out = B58[r] + out
+    return "1" * (len(raw) - len(raw.lstrip(b"\0"))) + out
+
+
+def fund(payer, account):
+    """Transfer FUNDING to `account` (hex, as a node's wallet reports it) and see
+    it arrive. fund_account returns once the transfer is submitted, and two
+    submitted within one block share the payer's nonce: the second is dropped."""
+    for attempt in range(1, 6):
+        tool("fund_account", "--to", account, "--amount", str(FUNDING),
+             env={"LEZ_RLN_PAYER": payer})
+        for _ in range(20):
+            if rpc("getAccountBalance", b58(account)) > 0:
+                return attempt
+            time.sleep(0.5)
+    raise RuntimeError(f"no balance at {account} after 5 transfers")
+
+
 def init():
     os.makedirs(HOME, exist_ok=True)
     os.makedirs(f"{LEZ}/seq", exist_ok=True)
@@ -116,8 +142,10 @@ def init():
             "seq_poll_max_retries": 10,
             "seq_block_poll_max_amount": 100,
         }, f)
-    # The nodes, as root, and the sequencer, as uid 1000, both read and write here.
-    subprocess.run(["chmod", "-R", "a+rwX", LEZ], check=False)
+    # The sequencer runs as uid 1000 and only reads its config.
+    os.chmod(f"{LEZ}/seq", 0o755)
+    os.chmod(f"{LEZ}/seq/sequencer_config.json", 0o644)
+    os.chmod(HOME, 0o700)
     log("payer", payer, "minted; sequencer config written")
 
 
@@ -140,29 +168,27 @@ def setup():
         sys.exit(f"[harness lez] FAILED: run_setup printed no config account:\n{out[-600:]}")
     registry = f"logos:local:{b58_hex(account)}"
     wait("CLOCK_50 never ticked", lambda: clock_ms() > 0, 180)
-    os.makedirs(f"{LEZ}/fund", exist_ok=True)
-    os.makedirs(f"{LEZ}/funded", exist_ok=True)
-    subprocess.run(["chmod", "-R", "a+rwX", LEZ], check=False)
+    os.makedirs(f"{PUB}/fund", exist_ok=True)
+    os.makedirs(f"{PUB}/funded", exist_ok=True)
     # Published last: a node that reads it can ask for funding at once.
-    with open(f"{LEZ}/registry-id.tmp", "w") as f:
+    with open(f"{PUB}/registry-id.tmp", "w") as f:
         f.write(registry)
-    os.rename(f"{LEZ}/registry-id.tmp", f"{LEZ}/registry-id")
+    os.rename(f"{PUB}/registry-id.tmp", f"{PUB}/registry-id")
     log("registry", registry, "deployed; CLOCK_50 live; funding on request")
     while True:
-        for node in sorted(os.listdir(f"{LEZ}/fund")):
-            done = f"{LEZ}/funded/{node}"
-            if os.path.exists(done):
+        for node in sorted(os.listdir(f"{PUB}/fund")):
+            done = f"{PUB}/funded/{node}"
+            if node.endswith(".tmp") or os.path.exists(done):
                 continue
-            with open(f"{LEZ}/fund/{node}") as f:
+            with open(f"{PUB}/fund/{node}") as f:
                 account = f.read().strip()
             if not account:
                 continue  # the node is still writing it
             try:
-                tool("fund_account", "--to", account, "--amount", str(FUNDING),
-                     env={"LEZ_RLN_PAYER": payer})
+                attempts = fund(payer, account)
                 result = "ok"
-                log("funded", node, account)
-            except RuntimeError as e:
+                log("funded", node, account, f"(transfer {attempts})" if attempts > 1 else "")
+            except (RuntimeError, OSError, KeyError, ValueError) as e:
                 result = str(e)
                 log("FAILED funding", node, account, result)
             with open(done, "w") as f:

@@ -210,6 +210,7 @@ def load(path):
     if m.get("rln") is not None:
         rln = m["rln"] = {k: v for k, v in m["rln"].items() if not k.startswith("_")}
         rln.setdefault("epochSizeSec", 10)
+        rln.setdefault("maxEpochGap", 3)
         rln.setdefault("sequencerImage", "logos-sim-lez-sequencer:local")
 
     groups = m.get("groups") or []
@@ -481,14 +482,22 @@ def x25519_public(priv_hex):
 
 
 def mix_node(g):
-    """The `--mixnode` entry (<multiaddr>:<mix public key>) of a native bootstrap
-    group started with a fixed `--mixkey=`, else None. Its address, identity and
-    mix key are all known ahead, so other nodes can be handed it as a mix hop
-    before discovery finds any."""
-    if g["role"] != "bootstrap" or g["kind"] != NATIVE:
+    """The `--mixnode` entry (<multiaddr>:<mix public key>) of a bootstrap group
+    with a fixed mix key, else None: a native one started with `--mixkey=`, or a
+    module one with env NODEKEY and MIXKEY (the delivery node's own identity, on
+    its tcp port -- not its libp2p_module's). Address, identity and mix key are
+    all known ahead, so other nodes can be handed it as a mix hop before
+    discovery finds any."""
+    if g["role"] != "bootstrap":
         return None
-    key = next((a.split("=", 1)[1] for a in g.get("args", []) if a.startswith("--mixkey=")), None)
-    return f"{bootstrap_addr(g)}:{x25519_public(key)}" if key else None
+    if g["kind"] == NATIVE:
+        key = next((a.split("=", 1)[1] for a in g.get("args", []) if a.startswith("--mixkey=")), None)
+        return f"{bootstrap_addr(g)}:{x25519_public(key)}" if key else None
+    env = g.get("env", {})
+    if g["kind"] != MODULE_NODE or not (env.get("NODEKEY") and env.get("MIXKEY")):
+        return None
+    return (f"/ip4/{g['ip']}/tcp/{MODULE_TCP_PORT}/p2p/{peer_id(env['NODEKEY'])}"
+            f":{x25519_public(env['MIXKEY'])}")
 
 
 def libp2p_privkey(g):

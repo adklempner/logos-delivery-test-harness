@@ -55,11 +55,19 @@ if [ "${RLN:-0}" = 1 ]; then
   rlnregistry=$(cat /lez/registry-id)
   validate=true; [ "${RLN_VALIDATE:-1}" = 1 ] || validate=false
   export LOGOS_DELIVERY_RLN_PRESETS=/data/rln-presets.json
-  printf '{"%s": {"enabled": true, "registry-id": "%s", "epoch-size-sec": %s, "enable-validation": %s}}\n' \
-    "${RLN_PRESET:-}" "$rlnregistry" "${RLN_EPOCH:-10}" "$validate" > "$LOGOS_DELIVERY_RLN_PRESETS"
+  # Epoch 10 s and gap 3 are the Mix profile's: Mix RLN refuses to start on a
+  # backend configured otherwise.
+  printf '{"%s": {"enabled": true, "registry-id": "%s", "epoch-size-sec": %s, "max-epoch-gap": %s, "enable-validation": %s}}\n' \
+    "${RLN_PRESET:-}" "$rlnregistry" "${RLN_EPOCH:-10}" "${RLN_MAX_EPOCH_GAP:-3}" "$validate" \
+    > "$LOGOS_DELIVERY_RLN_PRESETS"
 fi
+# MIX_RLN=1 (with RLN=1): per-hop Mix proofs from the same RLN backend and
+# registry, coordinated on MIX_RLN_TOPIC. Flat-shape profiles only.
+mixrln=""
+[ "${MIX_RLN:-0}" = 1 ] && mixrln="\"mix-rln-registry-id\": \"$rlnregistry\", \"mix-rln-metadata-topic\": \"${MIX_RLN_TOPIC:-/sim/1/mix-rln-metadata/proto}\","
 sed -e "s|@IP@|$IP|g" -e "s|@BOOTSTRAPS@|$bootstraps|g" -e "s|@LOOKUP@|$LOOKUP|g" \
-    -e "s|@MIX_ALLOW_ALL@|$mixallow|g" -e "s|@RLN_REGISTRY@|$rlnregistry|g" \
+    -e "s|@MIX_ALLOW_ALL@|$mixallow|g" -e "s|@MIX_RLN@|$mixrln|g" \
+    -e "s|@NODEKEY@|${NODEKEY:-}|g" -e "s|@MIXKEY@|${MIXKEY:-}|g" \
     -e "s|@MIXNODES@|$mixnodes|g" -e "s|@ANONYMITY@|${ANONYMITY_LEVEL:-Preferred}|g" \
     -e "s|@CLUSTER@|$CLUSTER_ID|g" -e "s|@SHARDS@|$NUM_SHARDS|g" \
     -e "s|@TCP_PORT@|$TCP_PORT|g" \

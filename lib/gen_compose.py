@@ -116,10 +116,11 @@ def _module_service(g, name, ip, net_conf, join, depends_on, rln=None):
     env.update({k: str(v) for k, v in g["env"].items()})
     lez_volume = ""
     if env.get("RLN") == "1":
-        # The registry id and the funding requests pass through out/lez.
+        # The registry id and the funding requests pass through out/lez/pub.
         env.setdefault("LEZ_RLN_SEQUENCER", manifest.lez_sequencer_url())
         env.setdefault("RLN_EPOCH", str(rln["epochSizeSec"]))
-        lez_volume = "\n      - ./out/lez:/lez"
+        env.setdefault("RLN_MAX_EPOCH_GAP", str(rln["maxEpochGap"]))
+        lez_volume = "\n      - ./out/lez/pub:/lez"
     envblock = "\n".join(f"      {k}: \"{v}\"" for k, v in env.items())
     health = ""
     if g["role"] == "bootstrap":
