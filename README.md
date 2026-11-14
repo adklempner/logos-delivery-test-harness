@@ -220,6 +220,25 @@ one offset and optionally stopped at another*:
   `MESH_CONTENT_TOPIC` (what the node subscribes to, default
   `/sim/1/mesh/proto`), `P2P_MAX_CONNS` (the plugin host's connection limits,
   default 100), `LD_DISCO_TRACE` (where the plugin writes its trace).
+  `SEND_COUNT` makes a delivery-module group's nodes senders: `SEND_AFTER`
+  seconds after subscribing (default 60) each sends that many messages on the
+  mesh content topic, one every `SEND_INTERVAL` seconds (default 5), padded to
+  `SEND_SIZE` bytes when set. `ANONYMITY_LEVEL` (`None`, `Preferred`,
+  `Required`) sets the level in the mix profiles. `collect`
+  then writes `delivery.txt` (`lib/msg_report.py`): per message, whether it was
+  propagated, confirmed and received by every other delivery-module node.
+  `MIXNODES` (the static mix pool behind a profile's `@MIXNODES@`) is derived:
+  every native bootstrap group started with a fixed `--mixkey=` is a mix node
+  whose address, identity and mix public key are known ahead, and the
+  delivery-module nodes are handed all of them (`examples/mix-static-smoke.json`,
+  profile `member-mix-static.json.tpl`). With `member-mix.json.tpl` the pool
+  comes from discovery only.
+  A delivery-module node that mounts mix can be picked as the exit of another
+  sender's message, and then gets no `messageReceived` for it: `delivery.txt`
+  counts that as a miss, so judge delivery by the plain members.
+  A plain send is confirmed against a store node, so the fleet needs one
+  (`examples/msg-smoke.json` runs it on the bootstrap) or every send ends in
+  `messageError` although it was delivered.
 
 A **bootstrap** group holds exactly one node, at a fixed address with a fixed
 identity, so the others know where to join before it starts:
@@ -265,7 +284,8 @@ the rest: its entry nodes become the node's kad bootstraps.
 | Profile in `conf/` | Network | Discovery |
 |---|---|---|
 | `member.json.tpl` (default) | the harness's: `@CLUSTER@`, `@SHARDS@`, `@BOOTSTRAPS@` | kad on libp2p_module (plugin) |
-| `member-mix.json.tpl` | the harness's | plugin kad, `anonymityLevel: Preferred` |
+| `member-mix.json.tpl` | the harness's | plugin kad, `anonymityLevel` from `env.ANONYMITY_LEVEL` (default `Preferred`); mix nodes come from discovery only |
+| `member-mix-static.json.tpl` | the harness's | plugin kad, `anonymityLevel` from `env.ANONYMITY_LEVEL` (default `Preferred`), static mix pool from the manifest's fixed-key mix nodes. Uses the legacy flat config shape: `messagingOverrides` has no `mixnode` option |
 | `member-logosdev.json.tpl` | logos.dev | kad on libp2p_module (plugin) |
 | `member-logosdev-kad.json.tpl` | logos.dev | kad in-process |
 | `member-logosdev-mix.json.tpl` | logos.dev | plugin kad, `anonymityLevel: Preferred` |

@@ -111,7 +111,7 @@ cmd_up() {
   cmd_gen
   # Traces are a bind mount and the members append to them, so a leftover file
   # would carry the previous run's lookups into this run's report.
-  rm -f "$out"/traces/*.trace
+  rm -f "$out"/traces/*.trace "$out"/traces/*.msg.jsonl "$out"/traces/*.send.jsonl
   : > "$out/run.log"
 
   runlog "manifest $MANIFEST"
@@ -266,6 +266,7 @@ cmd_collect() {
   dc ps -a --format '{{.Service}}\t{{.State}}\t{{.Status}}' > "$dir/ps.txt"
   dc logs --no-color 2>/dev/null | sed -n 's/.*\[harness /[harness /p' > "$dir/stages.txt"
   cp "$out"/traces/*.trace "$dir/" 2>/dev/null || true
+  cp "$out"/traces/*.msg.jsonl "$out"/traces/*.send.jsonl "$dir/" 2>/dev/null || true
   cp "$out/run.log" "$out/plan.json" "$out/resolved.json" "$dir/" 2>/dev/null || true
   "$here/promq.sh" up > "$dir/q_up.json" 2>&1 || true
   "$here/promq.sh" logos_delivery_connected_peers_per_shard > "$dir/q_peers.json" 2>&1 || true
@@ -273,6 +274,9 @@ cmd_collect() {
   # export (a logosdeliverynode has no per-shard gauge).
   "$here/promq.sh" 'sum by (node, role, kind) (logos_delivery_connected_peers{protocol="/vac/waku/relay/2.0.0"})' \
     > "$dir/q_relay.json" 2>&1 || true
+  # Usable mix pool per mix-mounted node, every scrape of the last 30 min: when
+  # discovery had handed a sender enough mix nodes to build a path.
+  "$here/promq.sh" 'mix_pool_size[30m]' > "$dir/q_mixpool.json" 2>&1 || true
 
   # A container log is a few MB, so by default keep only those with something to
   # explain: every bootstrap, every logosdeliverynode (no trace to judge them
@@ -301,6 +305,9 @@ print(' '.join(s for g in json.load(open('$out/plan.json')) if g['kind']=='deliv
       dc cp "$s:/tmp/screen.png" "$dir/$s.png" >/dev/null 2>&1
   done
   cmd_report "$dir" > "$dir/report.txt" 2>&1 || true
+  # Message delivery, when the manifest had a sender (SEND_COUNT in a group's env).
+  ls "$dir"/*.send.jsonl >/dev/null 2>&1 &&
+    { $PY "$here/lib/msg_report.py" "$dir" > "$dir/delivery.txt" 2>&1 || true; }
   log "collected into $dir; logs kept:" $keep
 }
 

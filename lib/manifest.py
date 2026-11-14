@@ -413,6 +413,42 @@ def bootstrap_addr(g):
     return f"/ip4/{g['ip']}/tcp/{port}/p2p/{g['peerId']}"
 
 
+def x25519_public(priv_hex):
+    """The Curve25519 public key of a 32-byte private key (RFC 7748), hex."""
+    p, a24 = 2**255 - 19, 121665
+    k = bytearray(bytes.fromhex(priv_hex))
+    if len(k) != 32:
+        raise ValueError("a mix key is 32 bytes")
+    k[0] &= 248
+    k[31] = (k[31] & 127) | 64
+    k = int.from_bytes(k, "little")
+    x1, x2, z2, x3, z3, swap = 9, 1, 0, 9, 1, 0
+    for t in reversed(range(255)):
+        bit = (k >> t) & 1
+        if swap ^ bit:
+            x2, x3, z2, z3 = x3, x2, z3, z2
+        swap = bit
+        a, b, c, d = (x2 + z2) % p, (x2 - z2) % p, (x3 + z3) % p, (x3 - z3) % p
+        aa, bb, da, cb = a * a % p, b * b % p, d * a % p, c * b % p
+        e = (aa - bb) % p
+        x3, z3 = (da + cb) ** 2 % p, x1 * (da - cb) ** 2 % p
+        x2, z2 = aa * bb % p, e * (aa + a24 * e) % p
+    if swap:
+        x2, z2 = x3, z3
+    return (x2 * pow(z2, p - 2, p) % p).to_bytes(32, "little").hex()
+
+
+def mix_node(g):
+    """The `--mixnode` entry (<multiaddr>:<mix public key>) of a native bootstrap
+    group started with a fixed `--mixkey=`, else None. Its address, identity and
+    mix key are all known ahead, so other nodes can be handed it as a mix hop
+    before discovery finds any."""
+    if g["role"] != "bootstrap" or g["kind"] != NATIVE:
+        return None
+    key = next((a.split("=", 1)[1] for a in g.get("args", []) if a.startswith("--mixkey=")), None)
+    return f"{bootstrap_addr(g)}:{x25519_public(key)}" if key else None
+
+
 def libp2p_privkey(g):
     """The nodekey as libp2p_module's privKey: a protobuf PrivateKey, type 2 =
     secp256k1, 32 bytes. Gives the module node the DHT identity peer_id() names."""

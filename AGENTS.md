@@ -150,6 +150,9 @@ For a mid-run look without disturbing anything: `./harness.sh collect <dir>`
 | `stages.txt` | per delivery-module and delivery-demo node: `load-module … OK`, `createNode OK`, `start OK (Ns)` — start judged by the node's own `nodeStarted` event, not the call — then `subscribe`, `openmetrics` (a delivery-demo logs only `start` and `subscribe`). `start FAILED: <reason>` means the container exited. `module lost: <module> at <utc>` means a module host crashed mid-run. |
 | `report.txt` | discovery summary over the delivery-module and delivery-demo nodes' traces (a logosdeliverynode writes none; judge those from Prometheus and their logs): members ready/advertised, first-lookup latency, empty lookups, records per lookup, coverage of the expected id set, per-member table |
 | `m*.trace`, `<module bootstrap>.trace` | every call across the discovery plugin boundary, with timestamps, per traced node |
+| `delivery.txt` | only with a sender group (`SEND_COUNT` in its `env`): per-message outcome matched across nodes — accepted, `messagePropagated`, `messageSent`, `messageError` reasons, received by every other delivery-module node, verdict |
+| `m*.send.jsonl`, `m*.msg.jsonl` | a sender's send calls with their replies; every delivery_module event a node saw (`messageReceived` and the sender's own outcome events) |
+| `q_mixpool.json` | `mix_pool_size` per mix-mounted node over the last 30 min: when a node knew enough usable mix nodes (4) to build a path |
 | `ps.txt` | container states at collection; stopped-by-schedule groups show `exited` |
 | `mN.png` | a screenshot of each running delivery-demo, taken through its QML inspector at collection |
 | `q_up.json`, `q_peers.json`, `q_relay.json` | Prometheus at collection: `up`; `logos_delivery_connected_peers_per_shard` (delivery-module nodes only); relay connections per node, in + out, for both kinds |
@@ -208,6 +211,12 @@ Lead with the verdict in one sentence, then:
 - Registrars keep an advert until it expires (900 s by default), so a stopped
   node's id can keep coming back from lookups for up to that long after the
   stop. That is expected, not a leak.
+- A mix pool fed by discovery alone takes about 16-17 min to become usable:
+  `/mix/1.0.0` is a node's second advertised service, its first advert showed
+  up in lookups ~11 min after start and the 4th usable mix node ~16.5 min
+  (measured with 4 mix nodes). A `Required` sender fails
+  every send until then, so run such a manifest for 25 min or more, or hand
+  the sender a static pool (`examples/mix-static-smoke.json`).
 - Fleet members (`"bootstraps": []`) depend on the preset's entry nodes. When
   most are down (check with `nc -z <entry> 30303`), a delivery-module member's
   libp2p start can outlast the entrypoint's 60 s `START_TIMEOUT` and log

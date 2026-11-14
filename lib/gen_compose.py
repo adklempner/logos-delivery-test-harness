@@ -216,6 +216,14 @@ def generate(m, compose_path, targets_path, plan_path):
     first = next(iter(boots.values()), None)
     dht_entry = manifest.bootstrap_addr(first) if first else ""
 
+    # Fixed-key mix nodes of this manifest, for the profiles that take a static
+    # mix pool (@MIXNODES@); a group's own env.MIXNODES wins.
+    mixnodes = ",".join(filter(None, (manifest.mix_node(g) for g in m["groups"])))
+    if mixnodes:
+        for g in m["groups"]:
+            if g["kind"] != NATIVE:
+                g["env"].setdefault("MIXNODES", mixnodes)
+
     services, targets, plan = [], [], []
     member_no = 0
     joins = {}  # member service -> the bootstrap service it joins through

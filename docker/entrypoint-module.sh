@@ -80,6 +80,38 @@ fi
 retry "subscribe ${MESH_CONTENT_TOPIC}" \
   logoscore call delivery_module subscribe "${MESH_CONTENT_TOPIC}"
 
+# Every delivery_module event of this node, one JSON object per line: what it
+# received (messageReceived) and how its own sends went (messagePropagated,
+# messageSent, messageError). lib/msg_report.py matches them across nodes.
+logoscore watch delivery_module --json >>"/traces/$(hostname).msg.jsonl" 2>/dev/null &
+
+# SEND_COUNT > 0 makes this node a sender: SEND_AFTER seconds from here, one
+# message every SEND_INTERVAL seconds on the mesh content topic. The payload,
+# "<node>-<n>", is what a receiver's event carries back, so it names the message
+# across nodes; the reply to the call holds the request id the sender's own
+# events refer to.
+send_messages() {
+  local i payload reply t
+  sleep "${SEND_AFTER:-60}"
+  log "sending ${SEND_COUNT} messages, one every ${SEND_INTERVAL:-5}s"
+  for i in $(seq 1 "$SEND_COUNT"); do
+    payload="$(hostname)-$i"
+    # SEND_SIZE pads the payload to that many bytes, to probe a size limit.
+    while [ "${#payload}" -lt "${SEND_SIZE:-0}" ]; do payload="$payload-$payload"; done
+    [ "${SEND_SIZE:-0}" -gt 0 ] && payload=${payload:0:$SEND_SIZE}
+    t=$(date +%s%N)
+    reply=$(logoscore call delivery_module send "$MESH_CONTENT_TOPIC" "$payload" --json 2>&1 | tr -d '\n')
+    case "$reply" in
+      "{"*) ;;
+      *) reply="{\"raw\":\"$(echo "$reply" | tr '"\\' "'/" | cut -c1-300)\"}" ;;
+    esac
+    echo "{\"t\":$t,\"payload\":\"$payload\",\"reply\":$reply}" >>"/traces/$(hostname).send.jsonl"
+    sleep "${SEND_INTERVAL:-5}"
+  done
+  log "sending done"
+}
+[ "${SEND_COUNT:-0}" -gt 0 ] && send_messages &
+
 # /metrics for this member: the openmetrics module merges the delivery library's
 # Prometheus registry (rendered text) with nim-libp2p's registry inside
 # libp2p_module (structured series), labelling each series with its module.
