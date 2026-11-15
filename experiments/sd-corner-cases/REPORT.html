@@ -1,0 +1,607 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Service Discovery Corner Cases</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Sans+Condensed:wght@600&display=swap">
+<style>
+/* Layout: one reading column; each case and finding is a section with the same internal order (question, setup, result). */
+:root {
+  --bg: #f6f7f9; --surface: #ffffff; --ink: #18202b; --muted: #5b6676; --line: #dce1e8;
+  --accent: #2b59c3; --accent-soft: #e3eaf9;
+  --good: #23824f; --good-soft: #dff2e7;
+  --warn: #a96d07; --warn-soft: #fbefd6;
+  --bad: #c0392b; --bad-soft: #f8e0dc;
+  --f-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-head: "IBM Plex Sans Condensed", "IBM Plex Sans", system-ui, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #11151b; --surface: #181e26; --ink: #e6eaf0; --muted: #9aa5b4; --line: #2a323d;
+    --accent: #84a6f2; --accent-soft: #1f2b45;
+    --good: #5cc489; --good-soft: #173326; --warn: #e3ae4a; --warn-soft: #3a2e14;
+    --bad: #f07d6e; --bad-soft: #3d1e1a; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #11151b; --surface: #181e26; --ink: #e6eaf0; --muted: #9aa5b4; --line: #2a323d;
+  --accent: #84a6f2; --accent-soft: #1f2b45;
+  --good: #5cc489; --good-soft: #173326; --warn: #e3ae4a; --warn-soft: #3a2e14;
+  --bad: #f07d6e; --bad-soft: #3d1e1a; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink); font: 16px/1.6 var(--f-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 72px;
+}
+main { max-width: 860px; margin: 0 auto; display: grid; gap: 56px; }
+section { display: grid; gap: 16px; min-width: 0; }
+h1, h2, h3 { font-family: var(--f-head); font-weight: 600; text-wrap: balance; line-height: 1.2; margin: 0; }
+h1 { font-size: 2.4rem; letter-spacing: -0.01em; }
+h2 { font-size: 1.6rem; padding-top: 8px; border-top: 2px solid var(--ink); }
+h3 { font-size: 1.2rem; }
+p, ul, ol { margin: 0; max-width: 68ch; }
+ul, ol { padding-left: 1.2em; display: grid; gap: 4px; }
+a { color: var(--accent); }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+code, .mono { font-family: var(--f-mono); font-size: 0.86em; }
+code { background: var(--accent-soft); padding: 0 4px; border-radius: 3px; }
+.muted { color: var(--muted); }
+.small { font-size: 0.88rem; }
+.eyebrow { font: 500 0.75rem/1 var(--f-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+
+header { display: grid; gap: 14px; }
+.lede { font-size: 1.12rem; max-width: 62ch; }
+.meta { display: flex; flex-wrap: wrap; gap: 6px 18px; font: 0.82rem/1.5 var(--f-mono); color: var(--muted); }
+.toc { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 0.92rem; }
+
+.tally { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.tally div { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px; display: grid; gap: 2px; }
+.tally b { font: 600 2rem/1 var(--f-head); font-variant-numeric: tabular-nums; }
+.tally .g b { color: var(--good); } .tally .w b { color: var(--warn); } .tally .x b { color: var(--bad); }
+.tally span { font-size: 0.88rem; color: var(--muted); }
+
+.callout { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 16px 18px; display: grid; gap: 8px; }
+
+.chip { display: inline-block; font: 500 0.72rem/1 var(--f-mono); letter-spacing: 0.05em; text-transform: uppercase; padding: 4px 7px; border-radius: 3px; white-space: nowrap; vertical-align: 2px; }
+.c-crit { background: var(--bad); color: var(--surface); }
+.c-high { background: var(--bad-soft); color: var(--bad); }
+.c-med { background: var(--warn-soft); color: var(--warn); }
+.c-low { background: var(--accent-soft); color: var(--accent); }
+.c-ok { background: var(--good-soft); color: var(--good); }
+
+.tbl { overflow-x: auto; min-width: 0; }
+table { border-collapse: collapse; width: 100%; font-size: 0.9rem; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-weight: 600; font-size: 0.8rem; color: var(--muted); border-bottom-color: var(--ink); }
+td.n, th.n { text-align: right; white-space: nowrap; }
+
+figure { margin: 0; display: grid; gap: 8px; min-width: 0; }
+figure .draw { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 12px; }
+figure svg { display: block; width: 100%; min-width: 600px; height: auto; }
+figcaption { font-size: 0.86rem; color: var(--muted); max-width: 68ch; }
+svg text { font-family: var(--f-body); fill: var(--ink); }
+svg .t-m { fill: var(--muted); } svg .t-g { fill: var(--good); } svg .t-b { fill: var(--bad); } svg .t-w { fill: var(--warn); } svg .t-a { fill: var(--accent); }
+svg .mono { font-family: var(--f-mono); }
+svg .s-ink { stroke: var(--ink); fill: none; } svg .s-line { stroke: var(--line); fill: none; } svg .s-m { stroke: var(--muted); fill: none; }
+svg .box { fill: var(--surface); stroke: var(--line); }
+svg .box-ink { fill: var(--surface); stroke: var(--ink); }
+svg .f-a { fill: var(--accent); } svg .f-as { fill: var(--accent-soft); }
+svg .f-g { fill: var(--good); } svg .f-gs { fill: var(--good-soft); }
+svg .f-w { fill: var(--warn); } svg .f-ws { fill: var(--warn-soft); }
+svg .f-b { fill: var(--bad); } svg .f-bs { fill: var(--bad-soft); }
+svg .f-ink { fill: var(--ink); } svg .f-bg { fill: var(--bg); }
+
+.case { display: grid; gap: 12px; padding-top: 4px; }
+.case-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 12px; }
+.case-head .mono { color: var(--muted); font-size: 0.85rem; }
+.qa { display: grid; grid-template-columns: 9rem minmax(0, 1fr); gap: 6px 16px; }
+.qa dt { font: 500 0.78rem/1.9 var(--f-mono); text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.qa dd { margin: 0; min-width: 0; }
+@media (max-width: 600px) { .qa { grid-template-columns: 1fr; gap: 2px; } .qa dd { margin-bottom: 8px; } .tally { grid-template-columns: 1fr; } h1 { font-size: 1.9rem; } }
+
+.finding { display: grid; gap: 10px; padding-top: 14px; border-top: 1px solid var(--line); }
+.finding h3 { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
+.finding .num { font: 600 1.2rem/1 var(--f-head); color: var(--muted); }
+.kv { display: grid; grid-template-columns: 6.5rem minmax(0, 1fr); gap: 4px 14px; font-size: 0.95rem; }
+.kv dt { color: var(--muted); font-size: 0.85rem; padding-top: 1px; }
+.kv dd { margin: 0; min-width: 0; }
+
+.bars { display: grid; gap: 8px; max-width: 560px; }
+.bar { display: grid; grid-template-columns: 9.5rem minmax(0, 1fr); gap: 10px; align-items: center; font-size: 0.88rem; }
+.bar .track { height: 20px; background: var(--bg); border-radius: 3px; position: relative; }
+.bar .fill { height: 100%; border-radius: 3px; display: flex; align-items: center; justify-content: flex-end; padding-right: 6px; font: 500 0.78rem/1 var(--f-mono); color: var(--surface); }
+.split { display: flex; height: 26px; border-radius: 4px; overflow: hidden; font: 500 0.8rem/26px var(--f-mono); max-width: 640px; }
+.split span { padding-left: 8px; color: var(--surface); white-space: nowrap; overflow: hidden; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 0.84rem; color: var(--muted); }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: 0; }
+
+.ok-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px 20px; list-style: none; padding: 0; max-width: none; }
+.ok-list li { display: grid; gap: 2px; padding: 10px 0; border-top: 1px solid var(--line); }
+.ok-list b { font-weight: 600; }
+.ok-list span { font-size: 0.88rem; color: var(--muted); }
+details { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 12px 16px; }
+summary { cursor: pointer; font-weight: 600; }
+details[open] summary { margin-bottom: 10px; }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+</style>
+
+<main>
+<header>
+  <div class="eyebrow">Logos delivery · local harness experiment · 9 Nov 2026</div>
+  <h1>Service Discovery Corner Cases</h1>
+  <p class="lede">We ran six 87–100 node fleets on one machine for 35–55 minutes each. The goal was to find where kad-DHT service discovery slows down or breaks. Most of it held up. Three behaviours are broken and six are degraded.</p>
+  <div class="meta">
+    <span>logos-delivery-module 586e1a38</span><span>libp2p_module 33e3c7a7</span><span>nim-libp2p 1b893898</span><span>logos-delivery 6b1f3a09</span><span>logoscore-cli 665ac28b</span>
+  </div>
+  <nav class="toc" aria-label="Contents">
+    <a href="#background">How discovery works</a><a href="#setup">The setup</a><a href="#cases">The five cases</a><a href="#findings">Findings</a><a href="#held-up">What held up</a><a href="#predictions">Predictions</a><a href="#next">Next steps</a>
+  </nav>
+</header>
+
+<section aria-label="Summary">
+  <div class="tally">
+    <div class="g"><b>9</b><span>behaviours acceptable</span></div>
+    <div class="w"><b>6</b><span>degraded: slow or misleading</span></div>
+    <div class="x"><b>3</b><span>broken: nodes lost or isolated</span></div>
+  </div>
+  <div class="callout">
+    <b>The three to fix first</b>
+    <ol>
+      <li><b>A single libp2p_module bootstrap fills up.</b> Nodes that join after it is full stay cut off for good, and every API call still reports success. 34 of 87 nodes were isolated.</li>
+      <li><b>Registrations are rejected because the advertiser comes back 1–17 s late.</b> The registrar allows only 1 s. On a loaded host about half of all retries miss it, and each miss restarts the wait from zero.</li>
+      <li><b>The logoscore daemon segfaults</b> when discovery calls run past their timeouts at 87–99 nodes. When the daemon crashes, the node goes down with it.</li>
+    </ol>
+  </div>
+  <p class="small muted">Interactive charts for every number here: <a href="https://claude.ai/artifact/SFJXv92vuLs9rqr7Z4vMQc">SD corner cases dashboard</a>. The source write-ups are in the harness repo under <code>experiments/sd-corner-cases/</code> (<code>PLAN.md</code>, <code>SUMMARY.md</code>, <code>reports/C1–C5.md</code>).</p>
+</section>
+
+<section id="background">
+  <h2>How service discovery works</h2>
+  <p>A node that offers a service, the <b>advertiser</b>, stores a small record called an <b>ad</b> on other nodes, the <b>registrars</b>. A node looking for the service, the <b>looker</b>, asks registrars for ads. Registrars do not accept an ad straight away. They hand out a <b>ticket</b> that says how long to wait first. The wait is longer when the registrar is busy, when the service already has many ads, or when the advertiser's IP looks like IPs it already holds. This is the spam protection.</p>
+  <figure>
+    <div class="draw">
+      <svg viewBox="0 0 760 290" role="img" aria-label="Sequence: advertiser registers, receives a ticket, waits, retries inside a one second window, the ad is stored, a looker queries registrars.">
+        <defs>
+          <marker id="ar" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" class="f-ink"/></marker>
+          <marker id="arA" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" class="f-a"/></marker>
+        </defs>
+        <text x="16" y="74" font-weight="600" font-size="13">Advertiser</text>
+        <text x="16" y="164" font-weight="600" font-size="13">Registrar</text>
+        <text x="16" y="254" font-weight="600" font-size="13">Looker</text>
+        <line x1="120" y1="70" x2="744" y2="70" class="s-line" stroke-width="1.5"/>
+        <line x1="120" y1="160" x2="744" y2="160" class="s-line" stroke-width="1.5"/>
+        <line x1="120" y1="250" x2="744" y2="250" class="s-line" stroke-width="1.5"/>
+        <text x="744" y="285" text-anchor="end" font-size="11" class="t-m">time →</text>
+
+        <line x1="138" y1="72" x2="156" y2="156" class="s-ink" stroke-width="1.5" marker-end="url(#ar)"/>
+        <text x="130" y="52" font-size="12">1 register</text>
+        <line x1="176" y1="158" x2="194" y2="74" class="s-ink" stroke-width="1.5" marker-end="url(#ar)"/>
+        <text x="200" y="120" font-size="12">2 ticket: “wait W”</text>
+
+        <rect x="214" y="62" width="246" height="16" rx="3" class="f-as"/>
+        <text x="224" y="74" font-size="11.5" class="t-a">3 wait W (seconds up to 15 min)</text>
+
+        <line x1="468" y1="72" x2="484" y2="146" class="s-ink" stroke-width="1.5" marker-end="url(#ar)"/>
+        <text x="440" y="52" font-size="12">4 retry with ticket</text>
+        <rect x="478" y="146" width="18" height="28" rx="2" class="f-g"/>
+        <text x="487" y="192" text-anchor="middle" font-size="11.5" class="t-g" font-weight="600">1 s window</text>
+        <text x="466" y="214" text-anchor="end" font-size="11.5" class="t-b">late → rejected: wait lost, next try up to 10 min later</text>
+
+        <rect x="504" y="152" width="236" height="16" rx="3" class="f-as"/>
+        <text x="512" y="164" font-size="11.5" class="t-a">5 ad stored, served for 15–30 min</text>
+
+        <line x1="604" y1="248" x2="604" y2="174" class="s-ink" stroke-width="1.5" marker-end="url(#arA)"/>
+        <line x1="620" y1="172" x2="620" y2="246" class="s-ink" stroke-width="1.5" marker-end="url(#ar)"/>
+        <text x="594" y="226" text-anchor="end" font-size="11.5">6 lookup: 5 registrars per bucket, stop at 30 ads</text>
+        <text x="630" y="226" font-size="11.5">≤ 10 ads each</text>
+      </svg>
+    </div>
+    <figcaption>One registration and one lookup. Each service is registered at 3 registrars in every bucket of its routing table, up to 48 in all. The ad lifetime E is 900 s. The numbers are nim-libp2p <code>1b893898</code> defaults (<code>service_discovery/types.nim:26-38</code>).</figcaption>
+  </figure>
+  <p>The design leaves room for trouble in a few places: the 1 s retry window, the wait formula, the 10-minute maintenance round, and prune timing. We read the registrar and advertiser code first and wrote down eight predictions (P1–P8). Then we built one fleet case for each group of predictions. <a href="#predictions">Their outcomes</a> are at the end.</p>
+</section>
+
+<section id="setup">
+  <h2>The setup</h2>
+  <p>Everything ran on one laptop under docker (an OrbStack VM with 10 CPUs and 12.6 GB). No public fleet was used. Most nodes are a new lightweight node kind, <b>sd-agent</b>: a logoscore daemon that loads <i>only</i> libp2p_module. A small Python driver calls the module's public discovery API, the same calls delivery_module makes. Sd-agents only exercise discovery, so 100 of them fit on one host. A few real delivery-module nodes ran alongside as <b>bystanders</b>, to check that ordinary nodes still find each other.</p>
+  <figure>
+    <div class="draw">
+      <svg viewBox="0 0 760 330" role="img" aria-label="Test setup: one docker host with a bootstrap node, advertiser, looker and delivery groups; each sd-agent runs a driver, the logoscore daemon and libp2p_module; outputs go to traces and Prometheus.">
+        <defs><marker id="ar2" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" class="f-m"/></marker></defs>
+        <rect x="8" y="8" width="744" height="236" rx="6" class="box-ink" stroke-dasharray="4 3"/>
+        <text x="22" y="30" font-size="12" class="t-m mono">docker host · 10 CPU · members scattered over 10.0.0.0/8</text>
+
+        <rect x="26" y="74" width="160" height="86" rx="5" class="box-ink"/>
+        <text x="40" y="98" font-weight="600" font-size="13">Bootstrap</text>
+        <text x="40" y="118" font-size="11.5" class="t-m">sd-agent, 10.0.0.10</text>
+        <text x="40" y="136" font-size="11.5" class="t-m">every node joins here</text>
+        <text x="40" y="152" font-size="11.5" class="t-m">C1: 50 inbound, later 200</text>
+
+        <rect x="236" y="44" width="236" height="58" rx="5" class="box"/>
+        <text x="250" y="66" font-weight="600" font-size="13">Advertisers · sd-agent</text>
+        <text x="250" y="86" font-size="11.5" class="t-m">40–90 nodes, 1 to 43 services each</text>
+        <rect x="236" y="114" width="236" height="52" rx="5" class="box"/>
+        <text x="250" y="136" font-weight="600" font-size="13">Lookers · sd-agent</text>
+        <text x="250" y="154" font-size="11.5" class="t-m">8–10 nodes, lookups every 15–20 s</text>
+        <rect x="236" y="178" width="236" height="52" rx="5" class="box"/>
+        <text x="250" y="200" font-weight="600" font-size="13">Delivery bystanders</text>
+        <text x="250" y="218" font-size="11.5" class="t-m">0–10 delivery-module nodes</text>
+        <line x1="236" y1="73" x2="188" y2="104" class="s-m" stroke-width="1.2" marker-end="url(#ar2)"/>
+        <line x1="236" y1="140" x2="188" y2="122" class="s-m" stroke-width="1.2" marker-end="url(#ar2)"/>
+        <line x1="236" y1="204" x2="188" y2="140" class="s-m" stroke-width="1.2" marker-end="url(#ar2)"/>
+
+        <rect x="508" y="44" width="228" height="186" rx="5" class="box"/>
+        <text x="522" y="64" font-size="11" class="t-m mono">inside one sd-agent</text>
+        <rect x="522" y="74" width="200" height="30" rx="4" class="f-as"/>
+        <text x="532" y="94" font-size="12" class="t-a">sd_agent.py · the driver</text>
+        <text x="532" y="122" font-size="11" class="t-m mono">logoscore call …</text>
+        <rect x="522" y="130" width="200" height="26" rx="4" class="f-bg"/>
+        <text x="532" y="148" font-size="12">logoscore daemon</text>
+        <rect x="522" y="164" width="200" height="54" rx="4" class="box-ink"/>
+        <text x="532" y="184" font-size="12" font-weight="600">libp2p_module</text>
+        <text x="532" y="202" font-size="11" class="t-m">kad-DHT + service discovery</text>
+        <text x="532" y="214" font-size="11" class="t-m">(nim-libp2p 1b893898)</text>
+
+        <rect x="26" y="262" width="346" height="58" rx="5" class="box"/>
+        <text x="40" y="284" font-size="12" font-weight="600">Every API call → a trace line</text>
+        <text x="40" y="304" font-size="11.5" class="t-m">sd_report.py: time-to-findable, hit rate, ghosts</text>
+        <rect x="390" y="262" width="346" height="58" rx="5" class="box"/>
+        <text x="404" y="284" font-size="12" font-weight="600">Prometheus + CPU/probe sampler</text>
+        <text x="404" y="304" font-size="11.5" class="t-m">sd_prom.py: registrar decisions, CPU, memory</text>
+      </svg>
+    </div>
+    <figcaption>Each case is a JSON manifest of node groups, and each group has its own behaviour and start time. The harness generates a compose file from it, runs the fleet for a fixed time and collects traces, logs and metrics.</figcaption>
+  </figure>
+  <div class="tbl"><table>
+    <thead><tr><th>Term</th><th>What it means in this report</th></tr></thead>
+    <tbody>
+      <tr><td>Time-to-findable</td><td>From a node's first successful advertise to the first lookup by anyone that returns it.</td></tr>
+      <tr><td>Hit rate</td><td>Of the lookups for a service while its provider is advertising, the share that returned that provider.</td></tr>
+      <tr><td>Ghost</td><td>A node that has stopped but is still returned by lookups.</td></tr>
+      <tr><td>Rejected / Wait / Confirmed</td><td>The three registrar answers, counted from the <code>cd_register_requests</code> metric.</td></tr>
+      <tr><td>Isolated</td><td>A node whose discovery routing table holds at most one peer at the end of the run.</td></tr>
+    </tbody>
+  </table></div>
+  <p class="small muted">Two short runs came first: a 5-minute smoke run to check the driver, and an 11-minute, 47-node isolation run (<code>sd-iso</code>) for the crash. Only C5 used modified code: a logging-only patch to the nim-libp2p registrar. logos-delivery, delivery_module and libp2p_module were not changed.</p>
+</section>
+
+<section id="cases">
+  <h2>The five cases</h2>
+  <p>Each case asks one question that the code review raised. All cases share one bootstrap, cluster 42, one shard and service ids prefixed <code>sd/</code>. Runs are 35–55 minutes. That covers at least two advert lifetimes (15 min each) and two advertiser maintenance rounds (10 min each), so expiry and renewal effects show up.</p>
+
+  <div class="case">
+    <div class="case-head"><h3>C1 · Sharing a service with a big node</h3><span class="mono">87 nodes · 45 min · run twice (C1, C1b)</span></div>
+    <dl class="qa">
+      <dt>Question</dt><dd>If one or two large “hub” nodes also advertise your service, does that make you slower to find? And how long does a hub with 43 services take to become visible?</dd>
+      <dt>Why</dt><dd>The registrar keeps a minimum wait per service and per IP. The code suggests one expensive registrant could raise the wait for everyone else on the same service (P2). It also suggests that a node's second and later services wait about 15 min each (P1).</dd>
+      <dt>Setup</dt><dd>2 hubs, each advertising 43 services. 40 “solo” nodes each advertise one of the hubs' services. 20 control nodes advertise services no hub touches. 4 late joiners start at +20 min. 10 lookers and 10 delivery bystanders.</dd>
+      <dt>Result</dt><dd><ul>
+        <li>The first run hit a problem nobody predicted. The bootstrap stopped accepting connections at 50 inbound, and <b>34 of 87 nodes stayed isolated</b> for the whole run (finding 1). We reran it as C1b with a bigger bootstrap. All later cases use that bootstrap.</li>
+        <li>Hubs do <b>not</b> slow down the sole advertiser of a shared service. Both groups were found in about 5–6 min (p90 8:52 vs 9:54).</li>
+        <li>The hubs themselves are slow. After 45 min only <b>30 of their 86</b> (hub, service) pairs were visible.</li>
+        <li>4 of 4 lookers that made parallel calls crashed with a daemon segfault.</li>
+      </ul></dd>
+    </dl>
+  </div>
+
+  <div class="case">
+    <div class="case-head"><h3>C2 · An advertiser that keeps stopping and starting</h3><span class="mono">100 nodes · 45 min</span></div>
+    <dl class="qa">
+      <dt>Question</dt><dd>What happens to a “flapping” node that toggles its advert on and off, and to honest nodes that advertise the same service?</dd>
+      <dt>Why</dt><dd>A flapper comes back while its old ad is still cached, so its IP looks fully similar and it gets the maximum wait. Each flap may also raise the service's minimum wait for everyone (P3).</dd>
+      <dt>Setup</dt><dd>35 honest nodes on service <i>a</i> and 35 on control service <i>b</i>. 3 flappers on <i>a</i>: 5 s on / 5 s off, 30 s / 10 s and 120 s / 30 s. 3 + 3 late joiners at +12 min and again at +25 min. 8 lookers and 6 bystanders.</dd>
+      <dt>Result</dt><dd><ul>
+        <li>Flappers disappear. The two fast ones were visible only until about 17 min. The 120 s one was <b>never</b> found in 1,334 lookups.</li>
+        <li>Late honest joiners of the flapped service took <b>5–13 min</b> to be found. On the control service, four of six took 0:09–5:22. The sample is small: 3 nodes per cell.</li>
+        <li>A popular service is covered well. 43 of 44 providers were returned at some point. Flappers leaked no CPU or memory.</li>
+      </ul></dd>
+    </dl>
+  </div>
+
+  <div class="case">
+    <div class="case-head"><h3>C3 · Growing the fleet, then starving it of CPU</h3><span class="mono">30 → 99 nodes · 55 min</span></div>
+    <dl class="qa">
+      <dt>Question</dt><dd>How do lookups and registration change as the network grows? Does a slow, overloaded host make registrations fail?</dd>
+      <dt>Why</dt><dd>The ticket retry must arrive within 1 s, counted in whole seconds. Under CPU load a node may wake up late and miss it (P5).</dd>
+      <dt>Setup</dt><dd>Waves of 30, 20, 20 and 21 nodes join every 10 min. Each node advertises its own unique service and one shared service, <code>sd/all</code>. 8 lookers. From 40 to 48 min a separate container keeps all 10 CPUs busy.</dd>
+      <dt>Result</dt><dd><ul>
+        <li>Lookups slow with size. The median went from 0.47 s at 39 nodes to 2.8 s at 99, and 6–16 % hit the module's 10 s call limit past about 70 nodes.</li>
+        <li>Rejections were <b>0 % up to about 60 nodes</b> and more than half of all decisions at 99 nodes. They reached 76 % during the CPU burn.</li>
+        <li>The shared service gets slower to join as it gets more popular: 4:30 → 15:06. Unique services stay flat at about 7 min.</li>
+        <li>Two lookers crashed with the daemon segfault, even though they made one call at a time. One node never started.</li>
+      </ul></dd>
+    </dl>
+  </div>
+
+  <div class="case">
+    <div class="case-head"><h3>C4 · Nodes leaving, a few and then many</h3><span class="mono">100 nodes · 50 min</span></div>
+    <dl class="qa">
+      <dt>Question</dt><dd>How long does a node that has left stay findable? What happens when 30 % of the network disappears at once?</dd>
+      <dt>Why</dt><dd>Nothing tells registrars that a node stopped, and expired ads are pruned only every 15 min. The code suggests ghosts live 15–30 min (P6). Losing many registrars might also make lookups for rare services fail (P7).</dd>
+      <dt>Setup</dt><dd>50 nodes stay for the whole run. 15 stop at +12 min. 24 stop together at +25 min, which is 28 % of the nodes left. 10 lookers rotate over all services.</dd>
+      <dt>Result</dt><dd><ul>
+        <li>Departed nodes were still returned <b>19–23 min</b> after they left. The harness README says at most 15 min.</li>
+        <li>The mass drop cost about 5 minutes of extra failed lookups (21 % vs 13 %). Nodes that stayed remained 99–100 % findable.</li>
+        <li>After the drop, lookups got <i>faster</i> because the host had less to do.</li>
+      </ul></dd>
+    </dl>
+  </div>
+
+  <div class="case">
+    <div class="case-head"><h3>C5 · Asking the registrar why it says no</h3><span class="mono">87 nodes · 35 min · instrumented build</span></div>
+    <dl class="qa">
+      <dt>Question</dt><dd>What is the actual reason for the rejections seen in C1b and C3?</dd>
+      <dt>Why</dt><dd>The stock registrar logs the reason only at TRACE, so C1–C4 could only infer it from timing. This case turns the inference into a measurement.</dd>
+      <dt>Setup</dt><dd>A replay of C1b. libp2p_module was rebuilt from the same commit against nim-libp2p with a logging-only patch to <code>registrar.nim</code>. The patch logs each rejection reason, how late the retry was, and every decision with its wait and IP score. Behaviour is unchanged.</dd>
+      <dt>Result</dt><dd><ul>
+        <li><b>All 1,632 rejections</b> were ticket retries that arrived after the 1 s window, 1–17 s late (median 3 s).</li>
+        <li>51 % of all ticket retries were rejected.</li>
+        <li>When a registrar already holds an ad from the same IP, the first wait is <b>957 s</b> (median). Otherwise it is 319 s.</li>
+        <li>The clearest crash trace so far is from a hub. Its libp2p start took 89 s, it then fired 43 calls at once, they all overran, and the daemon segfaulted.</li>
+      </ul></dd>
+    </dl>
+  </div>
+</section>
+
+<section id="findings">
+  <h2>Findings</h2>
+  <p>Ranked by impact on a real network. Severity reflects how bad the effect is and how easy it is to hit, not how hard it is to fix.</p>
+
+  <article class="finding">
+    <h3><span class="num">1</span> A single bootstrap fills up and silently isolates later joiners <span class="chip c-crit">Critical</span></h3>
+    <p>A libp2p_module bootstrap accepts at most <code>maxInConnections</code> incoming peers. That was 50 at the harness setting; the module's own default is 25. Kad keeps its connections open and nothing trims them, so the slots never free up. A node that knows only this bootstrap gets refused, never learns a second peer, and keeps redialling for the whole run. Its <code>start</code>, advertise and lookup calls all report success, and its lookups return an empty list in 12 ms.</p>
+    <div class="split" role="img" aria-label="Of 86 joiners, 52 connected and 34 isolated">
+      <span style="flex: 52; background: var(--good)">52 connected</span>
+      <span style="flex: 34; background: var(--bad)">34 isolated</span>
+    </div>
+    <dl class="kv">
+      <dt>Who</dt><dd>12 of 40 solo nodes, 6 of 10 lookers, all 4 late joiners and <b>7 of 10 delivery nodes</b>. The delivery nodes saw only 1–3 of their 10 peers.</dd>
+      <dt>Layer</dt><dd>libp2p_module bootstrap and connection limits (C1)</dd>
+      <dt>Fix ideas</dt><dd>Re-bootstrap from the peer store when the table stays empty. Report “no DHT peers” as an error or event. Trim idle kad connections on entry nodes. Document that more than one bootstrap is required.</dd>
+    </dl>
+  </article>
+
+  <article class="finding">
+    <h3><span class="num">2</span> Ticket retries arrive late and lose all their waiting <span class="chip c-high">High</span></h3>
+    <p>The registrar accepts a retry only between <i>issue time + W</i> and <i>issue time + W + 1 s</i>, counted in whole seconds (<code>registrar.nim:205-217</code>). The advertiser sleeps exactly W after it <i>receives</i> the ticket. Nothing budgets for the network round trip, the truncated issue time or a busy event loop, so on a loaded host the retry is routinely late. A late retry is rejected. The advertiser drops the task (<code>advertiser.nim:334</code>), the slot stays empty until the next 10-minute maintenance round, and the next attempt starts without a ticket. That is why rejections arrive in waves 10 minutes apart.</p>
+    <figure>
+      <div class="draw">
+        <svg viewBox="0 0 640 220" role="img" aria-label="How late rejected retries arrived: 1 s 30 percent, 2 s 10, 3 s 8, 4 to 5 s 8, 6 to 8 s 20, 9 to 12 s 15, 13 to 17 s 6.">
+          <line x1="60" y1="180" x2="620" y2="180" class="s-ink"/>
+          <line x1="60" y1="134.3" x2="620" y2="134.3" class="s-line" stroke-dasharray="3 3"/>
+          <line x1="60" y1="88.6" x2="620" y2="88.6" class="s-line" stroke-dasharray="3 3"/>
+          <line x1="60" y1="42.9" x2="620" y2="42.9" class="s-line" stroke-dasharray="3 3"/>
+          <text x="52" y="184" text-anchor="end" font-size="11" class="t-m">0 %</text>
+          <text x="52" y="138" text-anchor="end" font-size="11" class="t-m">10 %</text>
+          <text x="52" y="92" text-anchor="end" font-size="11" class="t-m">20 %</text>
+          <text x="52" y="47" text-anchor="end" font-size="11" class="t-m">30 %</text>
+          <rect x="72" y="42.9" width="56" height="137.1" class="f-b"/>
+          <rect x="152" y="134.3" width="56" height="45.7" class="f-b"/>
+          <rect x="232" y="143.4" width="56" height="36.6" class="f-b"/>
+          <rect x="312" y="143.4" width="56" height="36.6" class="f-b"/>
+          <rect x="392" y="88.6" width="56" height="91.4" class="f-b"/>
+          <rect x="472" y="111.4" width="56" height="68.6" class="f-b"/>
+          <rect x="552" y="152.6" width="56" height="27.4" class="f-b"/>
+          <text x="100" y="36" text-anchor="middle" font-size="11" class="mono">~30</text>
+          <text x="180" y="128" text-anchor="middle" font-size="11" class="mono">~10</text>
+          <text x="260" y="137" text-anchor="middle" font-size="11" class="mono">~8</text>
+          <text x="340" y="137" text-anchor="middle" font-size="11" class="mono">~8</text>
+          <text x="420" y="82" text-anchor="middle" font-size="11" class="mono">~20</text>
+          <text x="500" y="105" text-anchor="middle" font-size="11" class="mono">~15</text>
+          <text x="580" y="146" text-anchor="middle" font-size="11" class="mono">~6</text>
+          <text x="100" y="198" text-anchor="middle" font-size="11">1 s</text>
+          <text x="180" y="198" text-anchor="middle" font-size="11">2 s</text>
+          <text x="260" y="198" text-anchor="middle" font-size="11">3 s</text>
+          <text x="340" y="198" text-anchor="middle" font-size="11">4–5 s</text>
+          <text x="420" y="198" text-anchor="middle" font-size="11">6–8 s</text>
+          <text x="500" y="198" text-anchor="middle" font-size="11">9–12 s</text>
+          <text x="580" y="198" text-anchor="middle" font-size="11">13–17 s</text>
+          <text x="340" y="216" text-anchor="middle" font-size="11" class="t-m">how late after the 1 s window closed</text>
+        </svg>
+      </div>
+      <figcaption>C5: share of the 1,632 rejected retries by lateness. 58 % were at most 3 s late, and none arrived early. A window of a few seconds would have saved most of them.</figcaption>
+    </figure>
+    <dl class="kv">
+      <dt>Threshold</dt><dd>0 % rejected below about 60 nodes. 51–76 % at 87–99 nodes on a saturated host.</dd>
+      <dt>Layer</dt><dd>nim-libp2p registrar and advertiser (C1b, C3, C5)</dd>
+      <dt>Fix ideas</dt><dd>Widen <code>registrationWindow</code>. Let a late retry keep the wait it already served. Or have the advertiser aim early and retry inside the window.</dd>
+    </dl>
+  </article>
+
+  <article class="finding">
+    <h3><span class="num">3</span> The logoscore daemon segfaults after discovery calls time out <span class="chip c-high">High</span></h3>
+    <p>The whole daemon dies (exit 139), and the node goes down with it. Every crash came after discovery calls ran past a deadline: libp2p_module's 10 s call budget, or logoscore's 20 s RPC deadline. Concurrent calls make it far more likely: 4 of 4 parallel lookers in C1b crashed, and so did a hub that fired 43 calls at once in C5. But two one-call-at-a-time lookers also crashed in C3. All crashes happened at 87–99 nodes with more than 800 % fleet CPU. C4 had the same timeouts and no crash, and a 47-node run did not reproduce it.</p>
+    <dl class="kv">
+      <dt>Hypothesis</dt><dd>A module reply that arrives after its RPC has already timed out reaches freed state in the daemon. Not proven: no core dump yet.</dd>
+      <dt>Layer</dt><dd>logoscore daemon (C1, C1b, C3, C5)</dd>
+      <dt>Next</dt><dd>Enable core dumps (<code>ulimit -c</code> plus compose <code>ulimits</code>) and replay the C5 hub pattern: concurrent calls into a module whose start is still in flight.</dd>
+    </dl>
+  </article>
+
+  <article class="finding">
+    <h3><span class="num">4</span> Each extra service from the same node waits about 15 minutes <span class="chip c-high">High</span></h3>
+    <p>A registrar scores how similar your IP is to the IPs it already holds, across <i>all</i> services. Once a registrar accepts one ad from your node, your IP scores 1.0 there, and every further service from you waits about a full ad lifetime. A node offering many services therefore becomes visible one service at a time.</p>
+    <div class="bars" role="img" aria-label="Median first wait: 957 seconds when the IP is already cached, 319 seconds otherwise">
+      <div class="bar"><span>IP already cached</span><div class="track"><div class="fill" style="width: 100%; background: var(--bad)">957 s</div></div></div>
+      <div class="bar"><span>Any other IP</span><div class="track"><div class="fill" style="width: 33.3%; background: var(--accent)">319 s</div></div></div>
+    </div>
+    <dl class="kv">
+      <dt>Effect</dt><dd>A 43-service hub was fully visible after 40 min at 53 nodes. At 87 nodes, only 30 of its 86 pairs were visible after 45 min. This applies to every mix node, which advertises <code>/logos/delivery</code> and <code>/mix/1.0.0</code>.</dd>
+      <dt>Layer</dt><dd>nim-libp2p registrar IP tree (C1, C1b, C5)</dd>
+      <dt>Fix ideas</dt><dd>Compute IP similarity per service, or leave an IP's own existing ads out of its score.</dd>
+    </dl>
+  </article>
+
+  <article class="finding">
+    <h3><span class="num">5</span> A popular service gets slower to join the more popular it is <span class="chip c-med">Medium</span></h3>
+    <p>Each registrar keeps a minimum wait per service. Every new registrant can push that minimum later, and the next newcomer must wait it out. With about 70 nodes already advertising <code>sd/all</code>, a new advertiser needed about 15 minutes. Each node's unique service, which nobody else advertises, stayed flat at about 7 minutes.</p>
+    <figure>
+      <div class="draw">
+        <svg viewBox="0 0 640 262" role="img" aria-label="Median time-to-findable per wave. Shared service: 4.5, 6.7, 13.3, 15.1 minutes at 30, 50, 70, 91 nodes. Unique service: 7.4, 7.6, 7.1, 7.4 minutes.">
+          <line x1="60" y1="220" x2="620" y2="220" class="s-ink"/>
+          <line x1="60" y1="157.5" x2="620" y2="157.5" class="s-line" stroke-dasharray="3 3"/>
+          <line x1="60" y1="95" x2="620" y2="95" class="s-line" stroke-dasharray="3 3"/>
+          <line x1="60" y1="32.5" x2="620" y2="32.5" class="s-m" stroke-dasharray="6 3"/>
+          <text x="52" y="224" text-anchor="end" font-size="11" class="t-m">0</text>
+          <text x="52" y="161" text-anchor="end" font-size="11" class="t-m">5 min</text>
+          <text x="52" y="99" text-anchor="end" font-size="11" class="t-m">10 min</text>
+          <text x="52" y="36" text-anchor="end" font-size="11" class="t-m">15 min</text>
+          <text x="618" y="26" text-anchor="end" font-size="11" class="t-m">E = one ad lifetime</text>
+          <rect x="86" y="163.75" width="40" height="56.25" class="f-w"/>
+          <rect x="134" y="127.5" width="40" height="92.5" class="f-a"/>
+          <rect x="226" y="136.25" width="40" height="83.75" class="f-w"/>
+          <rect x="274" y="125.25" width="40" height="94.75" class="f-a"/>
+          <rect x="366" y="53.3" width="40" height="166.7" class="f-w"/>
+          <rect x="414" y="131" width="40" height="89" class="f-a"/>
+          <rect x="506" y="31.25" width="40" height="188.75" class="f-w"/>
+          <rect x="554" y="127.9" width="40" height="92.1" class="f-a"/>
+          <text x="106" y="157" text-anchor="middle" font-size="10.5" class="mono">4:30</text>
+          <text x="154" y="121" text-anchor="middle" font-size="10.5" class="mono">7:24</text>
+          <text x="246" y="130" text-anchor="middle" font-size="10.5" class="mono">6:42</text>
+          <text x="294" y="119" text-anchor="middle" font-size="10.5" class="mono">7:35</text>
+          <text x="386" y="47" text-anchor="middle" font-size="10.5" class="mono">13:20</text>
+          <text x="434" y="125" text-anchor="middle" font-size="10.5" class="mono">7:07</text>
+          <text x="526" y="48" text-anchor="middle" font-size="10.5" class="mono" style="fill: var(--surface)">15:06</text>
+          <text x="574" y="122" text-anchor="middle" font-size="10.5" class="mono">7:22</text>
+          <text x="130" y="240" text-anchor="middle" font-size="11.5">wave-0 · 30 nodes</text>
+          <text x="270" y="240" text-anchor="middle" font-size="11.5">wave-10 · 50</text>
+          <text x="410" y="240" text-anchor="middle" font-size="11.5">wave-20 · 70</text>
+          <text x="550" y="240" text-anchor="middle" font-size="11.5">wave-30 · 91</text>
+          <text x="340" y="258" text-anchor="middle" font-size="11" class="t-m">fleet size when the wave joined</text>
+        </svg>
+      </div>
+      <div class="legend"><span><i style="background: var(--warn)"></i>shared service <code>sd/all</code></span><span><i style="background: var(--accent)"></i>the node's unique service</span></div>
+      <figcaption>C3: median time-to-findable per wave.</figcaption>
+    </figure>
+    <dl class="kv"><dt>Layer</dt><dd>nim-libp2p registrar service lower bound (C3)</dd></dl>
+  </article>
+
+  <article class="finding">
+    <h3><span class="num">6–7</span> Flappers vanish and slow down honest joiners <span class="chip c-med">Medium</span> <span class="chip c-low">Low</span></h3>
+    <p>Penalising a node that toggles its advert is intended. The surprise is how complete the penalty is. <code>stopAdvertising</code> cancels any pending ticket (<code>advertiser.nim:440</code>), so a node whose off-switch comes sooner than its ticket wait never registers again. Its few early ads, accepted while caches were empty, age out after about 17 minutes. Honest nodes joining the same service later waited 5–13 minutes, against 0:09–5:22 for four of six on the control service.</p>
+    <div class="tbl"><table>
+      <thead><tr><th>Flapper</th><th>On / off</th><th class="n">Cycles</th><th class="n">Returned / lookups</th><th class="n">Last seen</th></tr></thead>
+      <tbody>
+        <tr><td>flap-fast</td><td>5 s / 5 s</td><td class="n">255</td><td class="n">327 / 1,334</td><td class="n">17:06</td></tr>
+        <tr><td>flap-mid</td><td>30 s / 10 s</td><td class="n">67</td><td class="n">403 / 1,334</td><td class="n">16:53</td></tr>
+        <tr><td>flap-slow</td><td>120 s / 30 s</td><td class="n">18</td><td class="n"><b>0</b> / 1,334</td><td class="n">never</td></tr>
+      </tbody>
+    </table></div>
+    <dl class="kv"><dt>Layer</dt><dd>nim-libp2p advertiser and registrar (C2). The joiner delay rests on 3 + 3 nodes per comparison.</dd></dl>
+  </article>
+
+  <article class="finding">
+    <h3><span class="num">8</span> A node that left stays findable for up to 30 minutes <span class="chip c-med">Medium</span></h3>
+    <p>Nothing tells registrars that a node stopped, whether it stopped gracefully or through <code>stopAdvertising</code>. Expired ads are removed only when the registrar's prune loop runs, and that happens every 15 minutes (<code>service_discovery.nim:74-77</code>). An ad therefore lives between one and two lifetimes after the node's last registration. Clients should expect to dial dead records for a while after any departure.</p>
+    <figure>
+      <div class="draw">
+        <svg viewBox="0 0 640 170" role="img" aria-label="Timeline 0 to 50 minutes: nodes stopping at 12 minutes are last returned at about 31 minutes; nodes stopping at 25 minutes are last returned at about 46 to 48 minutes; both end at prune ticks.">
+          <line x1="225.6" y1="22" x2="225.6" y2="130" class="s-m" stroke-dasharray="4 3"/>
+          <line x1="399.6" y1="22" x2="399.6" y2="130" class="s-m" stroke-dasharray="4 3"/>
+          <line x1="573.6" y1="22" x2="573.6" y2="130" class="s-m" stroke-dasharray="4 3"/>
+          <text x="399.6" y="16" text-anchor="middle" font-size="11" class="t-m">registrar prune ticks, every 15 min</text>
+          <text x="36" y="58" text-anchor="end" font-size="11.5" font-weight="600">15 nodes</text>
+          <rect x="40" y="46" width="139.2" height="18" class="f-as"/>
+          <rect x="179.2" y="46" width="223.9" height="18" class="f-ws"/>
+          <line x1="403.1" y1="55" x2="407.7" y2="55" class="s-ink"/>
+          <text x="186" y="59" font-size="11" class="t-w">stopped 12:00 → still returned until 31:18 (19 min)</text>
+          <text x="36" y="104" text-anchor="end" font-size="11.5" font-weight="600">24 nodes</text>
+          <rect x="40" y="92" width="290" height="18" class="f-as"/>
+          <rect x="330" y="92" width="243.6" height="18" class="f-ws"/>
+          <line x1="573.6" y1="101" x2="598" y2="101" class="s-ink"/>
+          <text x="337" y="105" font-size="11" class="t-w">stopped 25:00 → until 46:01 (21 min)</text>
+          <line x1="40" y1="130" x2="620" y2="130" class="s-ink"/>
+          <text x="40" y="148" text-anchor="middle" font-size="11" class="t-m">0</text>
+          <text x="156" y="148" text-anchor="middle" font-size="11" class="t-m">10</text>
+          <text x="272" y="148" text-anchor="middle" font-size="11" class="t-m">20</text>
+          <text x="388" y="148" text-anchor="middle" font-size="11" class="t-m">30</text>
+          <text x="504" y="148" text-anchor="middle" font-size="11" class="t-m">40</text>
+          <text x="620" y="148" text-anchor="end" font-size="11" class="t-m">50 min</text>
+        </svg>
+      </div>
+      <div class="legend"><span><i style="background: var(--accent-soft)"></i>advertising</span><span><i style="background: var(--warn-soft)"></i>gone, still returned (median; whisker to the last one)</span></div>
+      <figcaption>C4: ghosts end in tight clusters at the prune ticks. The harness README's “up to 900 s” should read “up to 30 min”.</figcaption>
+    </figure>
+    <dl class="kv"><dt>Layer</dt><dd>nim-libp2p registrar prune loop (C4)</dd></dl>
+  </article>
+
+  <article class="finding">
+    <h3><span class="num">9–10</span> Lookups hit the 10 s call limit; a start can hang for good <span class="chip c-med">Medium</span> <span class="chip c-low">Low</span></h3>
+    <ul>
+      <li><b>Lookup limit.</b> A lookup for a rare service never collects 30 ads, so it walks every bucket. Past about 70 nodes on a saturated host, 6–20 % of these lookups failed at libp2p_module's 10 s synchronous call budget. All of them ended between 10.0 and 11.5 s.</li>
+      <li><b>Start hang.</b> In a 100-node boot storm, one node in C3 and one in C4 never got their libp2p switch started within 180 s, and nothing retried. Starts that did finish took up to 89 s.</li>
+    </ul>
+    <dl class="kv"><dt>Layer</dt><dd>libp2p_module call budget and start (C1b, C3, C4, C5)</dd></dl>
+  </article>
+</section>
+
+<section id="held-up">
+  <h2>What held up</h2>
+  <p>These behaved correctly and fast enough in every case where they were measured.</p>
+  <ul class="ok-list">
+    <li><b>Finding a sole advertiser</b><span>Every one was found. Median 4–7 min, flat from 30 to 91 nodes.</span></li>
+    <li><b>Sharing a service with a hub</b><span>No slowdown against controls (p90 8:52 vs 9:54).</span></li>
+    <li><b>Coverage of a popular service</b><span>Lookups combine registrars up to 30 records; 43 of 44 providers were seen.</span></li>
+    <li><b>Late joiner into a formed network</b><span>Findable in 2:01–5:59 after joining at +20 min.</span></li>
+    <li><b>Delivery nodes behind a roomy bootstrap</b><span>10 of 10 and 6 of 6 saw every <code>/logos/delivery</code> peer.</span></li>
+    <li><b>Losing 28 % of nodes at once</b><span>About 5 min of extra lookup failures; the rest stayed 99–100 % findable.</span></li>
+    <li><b>Renewal after one ad lifetime</b><span>No flicker at 15 or 30 min; hit rates held at 93–100 %.</span></li>
+    <li><b>Flapper resource use</b><span>No leak: CPU, memory (38–46 MiB) and pending tasks matched honest nodes.</span></li>
+    <li><b>Registrar cache and memory</b><span>Median 13 ads per registrar against a cap of 1,000. Module memory rose from 40 to 44 MiB in 45 min.</span></li>
+  </ul>
+</section>
+
+<section id="predictions">
+  <h2>Predictions from the code review</h2>
+  <div class="tbl"><table>
+    <thead><tr><th>#</th><th>Prediction</th><th>Outcome</th><th>Evidence</th></tr></thead>
+    <tbody>
+      <tr><td>P1</td><td>Extra services from one node wait about 15 min each</td><td><span class="chip c-high">Confirmed</span></td><td>957 s vs 319 s first wait (C5); hubs slow in C1, C1b</td></tr>
+      <tr><td>P2</td><td>A hub delays the sole advertiser of a shared service</td><td><span class="chip c-ok">Refuted</span></td><td>Same time-to-findable as controls, twice (C1, C1b)</td></tr>
+      <tr><td>P3</td><td>A flapper delays honest advertisers of its service</td><td><span class="chip c-med">Supported</span></td><td>5–13 min vs 0:09–5:22 (C2, small sample)</td></tr>
+      <tr><td>P4</td><td>The 10-ad answer limit caps coverage of a popular service</td><td><span class="chip c-ok">Refuted</span></td><td>43 of 44 providers returned (C2)</td></tr>
+      <tr><td>P5</td><td>The 1 s window rejects late retries under load</td><td><span class="chip c-high">Proven</span></td><td>100 % of rejections, 1–17 s late (C5)</td></tr>
+      <tr><td>P6</td><td>Departed ads live 15–30 min</td><td><span class="chip c-med">Confirmed</span></td><td>19–23 min, ending at prune ticks (C4)</td></tr>
+      <tr><td>P7</td><td>Losing registrars hurts rare-service lookups</td><td><span class="chip c-ok">Mostly refuted</span></td><td>A 5-min blip at 28 % loss (C4)</td></tr>
+      <tr><td>P8</td><td>Renewal gaps cause flicker after 15 min</td><td><span class="chip c-ok">Not seen</span></td><td>Unpruned old ads cover the gap (C1)</td></tr>
+    </tbody>
+  </table></div>
+  <p class="small muted">Not predicted, found in the runs: findings 1, 3, 5, 9 and 10.</p>
+</section>
+
+<section id="next">
+  <h2>Next steps</h2>
+  <div class="tbl"><table>
+    <thead><tr><th>Area</th><th>Suggested change</th><th>Where</th></tr></thead>
+    <tbody>
+      <tr><td>Bootstrap saturation (1)</td><td>Re-bootstrap when the table stays empty; surface “no DHT peers”; trim idle kad connections; require several bootstraps</td><td>libp2p_module</td></tr>
+      <tr><td>Ticket window (2)</td><td>Wider window, keep served wait on a late retry, or retry early</td><td>nim-libp2p</td></tr>
+      <tr><td>Daemon segfault (3)</td><td>Reproduce with core dumps on the C5 hub pattern</td><td>logoscore-cli</td></tr>
+      <tr><td>Multi-service wait (4)</td><td>Per-service IP similarity, or ignore an IP's own ads</td><td>nim-libp2p</td></tr>
+      <tr><td>Ghost lifetime (8)</td><td>Correct the README to “up to 2 × 900 s”</td><td>harness README</td></tr>
+    </tbody>
+  </table></div>
+  <details>
+    <summary>Caveats and where the data lives</summary>
+    <ul>
+      <li><b>One host.</b> All nodes shared 10 CPUs. The host was saturated from about 60 nodes, so thresholds tied to load (findings 2, 3, 9, 10) will move on real, distributed hardware. The mechanisms behind them will not.</li>
+      <li><b>Bootstrap.</b> After C1, the bootstrap had 400 connections (200 inbound), so findings 2–10 were measured on a fully connected fleet.</li>
+      <li><b>Lookers.</b> From C2 on, lookers made one call at a time to avoid the crash.</li>
+      <li><b>Small samples.</b> The flapper effect on joiners (finding 7) rests on 3 + 3 nodes per comparison.</li>
+      <li><b>Code.</b> Harness branch <code>experimental/sd-corner-cases</code>, committed locally and not pushed. It adds the sd-agent kind, the driver, the analysis scripts and this experiment folder.</li>
+      <li><b>Instrumented build.</b> The C5 logging patch is on the nim-libp2p branch <code>experimental/sd-registrar-reasons</code>, uncommitted and logging only.</li>
+      <li><b>Raw data.</b> The traces, Prometheus dumps and logs for each run are under <code>out/collect/sd-*</code> on the test machine.</li>
+    </ul>
+  </details>
+</section>
+</main>
+
+</html>
