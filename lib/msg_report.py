@@ -54,11 +54,114 @@ def spread(values):
     return f"min {ms(v[0])} / median {ms(v[len(v) // 2])} / max {ms(v[-1])} ms"
 
 
+def pct(values, q):
+    v = sorted(values)
+    return v[min(len(v) - 1, int(len(v) * q))] / 1e6 if v else float("nan")
+
+
+def dist(counts):
+    """min / median / max and the coefficient of variation of a load spread."""
+    v = sorted(counts)
+    if not v:
+        return "-"
+    mean = sum(v) / len(v)
+    cv = (sum((x - mean) ** 2 for x in v) / len(v)) ** 0.5 / mean if mean else 0
+    return f"min {v[0]} / median {v[len(v) // 2]} / max {v[-1]}, cv {cv:.2f}"
+
+
+def long_run(d, sends, own, rx, hashes, receivers, to_prop):
+    """What a long run adds: percentiles, the run over time, end-to-end latency,
+    mix routes (mixlog.txt), per-node mix load (q_mixload.json), resources."""
+    print(f"latency send->propagated: p50 {pct(to_prop, .5):.0f} / p90 {pct(to_prop, .9):.0f} "
+          f"/ p99 {pct(to_prop, .99):.0f} ms")
+    e2e = [rx[r][p] - t for _, p, t, _, _ in sends for r in receivers if p in rx[r]]
+    if e2e:
+        print(f"latency send->received (per receiver, local clocks): p50 {pct(e2e, .5):.0f} "
+              f"/ p90 {pct(e2e, .9):.0f} / p99 {pct(e2e, .99):.0f} ms over {len(e2e)} receptions")
+
+    t0 = min(s[2] for s in sends)
+    span = max(s[2] for s in sends) - t0
+    width = max(60e9, span / 12)
+    buckets = defaultdict(lambda: [0, 0, 0, []])  # sends, propagated, errors, latencies
+    for sender, _, t, rid, _ in sends:
+        b = buckets[int((t - t0) // width)]
+        ev = own[sender].get(rid, {}) if rid else {}
+        b[0] += 1
+        b[2] += "messageError" in ev
+        if "messagePropagated" in ev:
+            b[1] += 1
+            b[3].append(ev["messagePropagated"][0] - t)
+    print(f"over time, from the first send, {width / 60e9:.0f} min steps:")
+    for i in sorted(buckets):
+        n, ok, err, lat = buckets[i]
+        print(f"  +{i * width / 60e9:4.0f} min: {n:5d} sends, propagated {100 * ok / n:5.1f}%, "
+              f"errors {err:4d}, p50 {pct(lat, .5):6.0f} / p90 {pct(lat, .9):6.0f} ms")
+
+    path = os.path.join(d, "mixlog.txt")
+    if os.path.exists(path):
+        sent_hash = {hashes.get((s[0], s[3])) for s in sends} - {None}
+        exits, handled, tries = Counter(), Counter(), {}
+        with open(path) as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) == 3 and parts[1] == "exit" and parts[2] in sent_hash:
+                    exits[parts[0]] += 1
+                    handled[parts[2]] += 1
+                elif len(parts) == 4 and parts[1] == "try":
+                    tries[parts[2]] = max(tries.get(parts[2], 0), int(parts[3]))
+        print(f"mix exits: {sum(exits.values())} lightpush requests for {len(handled)}/{len(sent_hash)} "
+              f"messages at {len(exits)} nodes; per exit node: {dist(list(exits.values()))}")
+        print("  busiest: " + ", ".join(f"{n} {c}" for n, c in exits.most_common(5))
+              + "; quietest: " + ", ".join(f"{n} {c}" for n, c in exits.most_common()[-3:]))
+        more = sum(1 for c in handled.values() if c > 1)
+        print(f"  messages that reached more than one exit: {more}")
+        tc = Counter(tries.values())
+        print("  tries per message: " + ", ".join(f"{k} x{v}" for k, v in sorted(tc.items())))
+
+    path = os.path.join(d, "q_mixload.json")
+    if os.path.exists(path):
+        try:
+            with open(path) as f:
+                series = json.load(f)["data"]["result"]
+        except (ValueError, KeyError):
+            series = []
+        load = defaultdict(dict)
+        for r in series:
+            m = r["metric"]
+            load[m["__name__"]][m.get("node", "?")] = load[m["__name__"]].get(m.get("node", "?"), 0) + float(r["value"][1])
+        for name in sorted(load):
+            v = [int(x) for x in load[name].values()]
+            print(f"{name}: total {sum(v)} over {len(v)} nodes; per node: {dist(v)}")
+
+    path = os.path.join(d, "stats.tsv")
+    if os.path.exists(path):
+        mem, cpu = defaultdict(float), defaultdict(list)
+        total = defaultdict(float)
+        with open(path) as f:
+            for line in f:
+                p = line.rstrip("\n").split("\t")
+                if len(p) != 4:
+                    continue
+                used = p[3].split("/")[0].strip()
+                mib = float(used[:-3]) * {"KiB": 1 / 1024, "MiB": 1, "GiB": 1024}.get(used[-3:], 0)
+                mem[p[1]] = max(mem[p[1]], mib)
+                total[p[0]] += mib
+                cpu[p[0]].append(float(p[2].rstrip("%") or 0))
+        if total:
+            cpus = [sum(v) for v in cpu.values()]
+            print(f"resources: {len(mem)} containers, memory in use peak {max(total.values()) / 1024:.1f} GiB; "
+                  f"CPU all containers mean {sum(cpus) / len(cpus):.0f}% / peak {max(cpus):.0f}% (100% = one core)")
+            top = sorted(mem.items(), key=lambda kv: -kv[1])[:3]
+            print("  largest: " + ", ".join(f"{n.split('-')[-2]} {m:.0f} MiB" for n, m in top))
+
+
 def main(d):
     node = lambda p, suffix: os.path.basename(p)[: -len(suffix)]
     received = defaultdict(Counter)  # node -> payload -> times
     sources = Counter()
     own = defaultdict(dict)  # sender -> request id -> {event: (ns, error)}
+    rx = defaultdict(dict)  # node -> payload -> local ns of the first reception
+    hashes = {}  # (sender, request id) -> message hash
     for path in sorted(glob.glob(os.path.join(d, "*.msg.jsonl"))):
         n = node(path, ".msg.jsonl")
         received[n]  # a node that saw no event is still a receiver
@@ -66,12 +169,17 @@ def main(d):
             a = e.get("data", {})
             ev = e.get("event")
             if ev == "messageReceived":
-                received[n][payload_text(a.get("arg2"))] += 1
+                text = payload_text(a.get("arg2"))
+                received[n][text] += 1
                 sources[a.get("arg3")] += 1
+                if "rx" in e:
+                    rx[n].setdefault(text, e["rx"])
             elif ev in ("messagePropagated", "messageSent"):
                 own[n].setdefault(a.get("arg0"), {})[ev] = (a.get("arg2"), None)
+                hashes[(n, a.get("arg0"))] = a.get("arg1")
             elif ev == "messageError":
                 own[n].setdefault(a.get("arg0"), {})[ev] = (a.get("arg3"), a.get("arg2"))
+                hashes[(n, a.get("arg0"))] = a.get("arg1")
 
     sends = []  # (sender, payload, t, request id or None, refusal)
     for path in sorted(glob.glob(os.path.join(d, "*.send.jsonl"))):
@@ -149,6 +257,9 @@ def main(d):
         print(f"... and {len(undelivered) - 20} more undelivered")
     for r, count in missed_by.most_common(10):
         print(f"receiver {r} missed {count}/{total}")
+
+    if total >= 50:
+        long_run(d, sends, own, rx, hashes, receivers, to_prop)
 
     ok = not refused and not errors and n_full == total
     print("verdict:", "PASS" if ok else "FAIL")

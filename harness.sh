@@ -233,7 +233,15 @@ print(' '.join(f\"{g['name']}@{t}s\" for g in plan if not g.get('manual') for t 
     sleep 1
   done
   t0=$(cat "$out/t0")
-  while [ $(($(date +%s) - t0)) -lt "$duration" ]; do sleep 5; done
+  # CPU and memory of every container, every 30 s: out/stats.tsv.
+  : > "$out/stats.tsv"
+  local tick=0
+  while [ $(($(date +%s) - t0)) -lt "$duration" ]; do
+    sleep 5; tick=$((tick + 1))
+    [ $((tick % 6)) -eq 0 ] && docker stats --no-stream \
+      --format "$(($(date +%s) - t0))\t{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}" 2>/dev/null |
+      grep "$(basename "$here")-" >> "$out/stats.tsv"
+  done
   touch "$out/abort"
   wait $up
   rm -f "$out/abort"
@@ -322,6 +330,25 @@ cmd_collect() {
   # Usable mix pool per mix-mounted node, every scrape of the last 30 min: when
   # discovery had handed a sender enough mix nodes to build a path.
   "$here/promq.sh" 'mix_pool_size[30m]' > "$dir/q_mixpool.json" 2>&1 || true
+  # What each mix node handled: received, forwarded, failed, reply timeouts.
+  "$here/promq.sh" '{__name__=~"mix_messages_recvd_total|mix_messages_forwarded_total|mix_messages_error_total|mix_reply_timeouts_total"}' \
+    > "$dir/q_mixload.json" 2>&1 || true
+  cp "$out/stats.tsv" "$dir/" 2>/dev/null || true
+  # Mix routes, from every node's log: which node was the exit of which message
+  # (its lightpush request names the hash), and each try of a sender.
+  for s in $(dc ps -a --format '{{.Service}}' | grep -v -e '^lez-' -e prometheus -e grafana); do
+    dc logs --no-color "$s" 2>/dev/null | $PY -c "
+import re, sys
+ansi = re.compile(r'\x1b\[[0-9;]*m')
+for line in sys.stdin.buffer:
+    if b'Handling lightpush request' in line:
+        m = re.search(r'msg_hash=(0x[0-9a-f]+)', ansi.sub('', line.decode(errors='replace')))
+        if m: print('$s exit', m.group(1))
+    elif b'Trying message delivery via Mix' in line:
+        m = re.search(r'msgHash=(0x[0-9a-f]+) tryCount=(\d+)', line.decode(errors='replace'))
+        if m: print('$s try', m.group(1), m.group(2))
+"
+  done > "$dir/mixlog.txt"
 
   # A container log is a few MB, so by default keep only those with something to
   # explain: every bootstrap, every logosdeliverynode (no trace to judge them
