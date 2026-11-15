@@ -128,7 +128,12 @@ retry "subscribe ${MESH_CONTENT_TOPIC}" \
 # Every delivery_module event of this node, one JSON object per line: what it
 # received (messageReceived) and how its own sends went (messagePropagated,
 # messageSent, messageError). lib/msg_report.py matches them across nodes.
-logoscore watch delivery_module --json >>"/traces/$(hostname).msg.jsonl" 2>/dev/null &
+# Each line gets the local clock in ns ("rx") in front: an event carries its own
+# time to the second only, and a reception is timed against the sender's clock.
+logoscore watch delivery_module --json 2>/dev/null |
+  while IFS= read -r line; do
+    printf '{"rx":%s,%s\n' "$(date +%s%N)" "${line#\{}"
+  done >>"/traces/$(hostname).msg.jsonl" &
 
 # SEND_COUNT > 0 makes this node a sender: SEND_AFTER seconds from here, one
 # message every SEND_INTERVAL seconds on the mesh content topic. The payload,
