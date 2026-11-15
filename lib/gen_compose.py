@@ -18,6 +18,7 @@ import sys
 
 import manifest
 from manifest import (
+    AGENT_NODE,
     DEMO_NODE,
     DEMO_VNC_PORT,
     MODULE_METRICS_PORT,
@@ -187,6 +188,49 @@ def _lez_services(rln):
     ]
 
 
+def _agent_service(g, name, ip, join, depends_on, index):
+    """An sd-agent: a logoscore daemon hosting only libp2p_module, driven by
+    docker/sd_agent.py through the module's service-discovery API. `index` is
+    the node's 1-based position in its group ({i} in the SD_* env)."""
+    env = {
+        "BOOTSTRAP_ADDR": join,
+        "START_JITTER": str(g["jitter"]),
+        "P2P_PORT": str(MODULE_P2P_PORT),
+        "METRICS_PORT": str(MODULE_METRICS_PORT),
+        "GROUP_NAME": g["name"],
+        "GROUP_INDEX": str(index),
+    }
+    if g["role"] == "bootstrap":
+        env["LIBP2P_PRIVKEY"] = manifest.libp2p_privkey(g)
+    env.update({k: str(v) for k, v in g["env"].items()})
+    envblock = "\n".join(f"      {k}: \"{v}\"" for k, v in env.items())
+    health = ""
+    if g["role"] == "bootstrap":
+        health = f"""    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/$$(hostname -i | cut -d' ' -f1)/{MODULE_P2P_PORT}"]
+      interval: 2s
+      timeout: 2s
+      retries: 90
+      start_period: 5s
+"""
+    return f"""  {name}:
+    image: logos-sim:local
+    hostname: {name}
+    labels:
+      harness.group: "{g['name']}"
+      harness.role: "{g['role']}"
+      harness.kind: "{g['kind']}"
+    entrypoint: ["/opt/sim/entrypoint-agent.sh"]
+    environment:
+{envblock}
+{_depends(depends_on)}    volumes:
+      - ./out/traces:/traces
+    networks:
+      sim:
+        ipv4_address: {ip}
+{health}"""
+
+
 def _demo_service(g, name, ip, net_conf, join, depends_on, paths, vnc_port):
     """The logos-delivery-demo UI as a member: joins like a module member, and
     its screen is published on `vnc_port` through noVNC. The app runs from the
@@ -281,12 +325,14 @@ def generate(m, compose_path, targets_path, plan_path):
             join, dep = ("", "") if g is first else (dht_entry, first["name"])
             if g["kind"] == NATIVE:
                 services.append(_native_service(g, name, ip, g["port"], net_conf, join, dep))
+            elif g["kind"] == AGENT_NODE:
+                services.append(_agent_service(g, name, ip, join, dep, 1))
             else:
                 services.append(_module_service(g, name, ip, net_conf, join, dep, rln))
             targets.append(_target(g, name, ip))
             names.append(name)
         else:
-            for ip in _addresses(net, g["count"], taken):
+            for index, ip in enumerate(_addresses(net, g["count"], taken), 1):
                 member_no += 1
                 name = f"m{member_no}"
                 # Round-robin over the whole fleet, so late joiners alternate
@@ -317,6 +363,8 @@ def generate(m, compose_path, targets_path, plan_path):
                     )
                     names.append(name)
                     continue
+                elif g["kind"] == AGENT_NODE:
+                    services.append(_agent_service(g, name, ip, join, dep, index))
                 else:
                     services.append(_module_service(g, name, ip, net_conf, join, dep, rln))
                 targets.append(_target(g, name, ip))
