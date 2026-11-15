@@ -2,13 +2,19 @@
 
 You are driving a docker fleet of logos-delivery nodes: one or more
 **bootstraps** (fixed nodes the rest join the DHT through) and **members**, plus
-Prometheus and Grafana. Every node is one of three **kinds**: `logosdeliverynode`
+Prometheus and Grafana. Every node is one of four **kinds**: `logosdeliverynode`
 (the delivery binary, kademlia in-process), `delivery-module` (a logoscore
-daemon hosting `delivery_module`, with discovery hosted on `libp2p_module`), or
-`delivery-demo` (the demo UI with its own delivery node; members only). A
+daemon hosting `delivery_module`, with discovery hosted on `libp2p_module`),
+`delivery-demo` (the demo UI with its own delivery node; members only), or
+`sd-agent` (libp2p_module alone, driven through its service-discovery API). A
 request usually reads like *"run a 30 min test with 2 bootstraps and 15 members,
 add one after 2 min"*. Your job: turn it into a manifest, run it,
 and report what happened with evidence.
+
+Before writing a manifest, look at the README's examples table: message
+traffic, mix, RLN and service-discovery cases already exist as manifests
+that carry their own build (`overrides`, `image`), `duration` and expected
+outcome (`expect`).
 
 The README has the reference material (manifest fields, overrides, commands).
 This file is the procedure and the things that are easy to get wrong.
@@ -25,7 +31,7 @@ This file is the procedure and the things that are easy to get wrong.
 - **Scratch manifests go in `out/manifests/`** (gitignored). Only add to
   `examples/` when asked for a reusable topology.
 - **Do not edit `out/`** by hand except `out/manifests/`; it is regenerated.
-- **Do not edit `harness.sh` while a `build`, `up` or `run` is executing it.**
+- **Do not edit `harness.sh` while a `build`, `up`, `run` or `suite` is executing it.**
   bash reads a script as it goes: the running command finishes, then fails on
   whatever the edit left at its old read position.
 - **Do not push, open PRs or change the default pins** unless the operator asks.
@@ -55,8 +61,14 @@ Start from the closest file in `examples/` (or `harness.json`) and copy it to
 | "on cluster N" (a non-preset network) | `"clusterId": N` on the group, or `network.clusterId` for all; a member must share its bootstraps' cluster. Shards stay manifest-wide (`network.shardsInNetwork`) |
 | "members join through every bootstrap", "a bootstrap list" | `"joinAll": true` on the member group (order = its `bootstraps`) |
 | "an unreachable / dead bootstrap first" | `"extraBootstraps": ["/ip4/10.0.0.99/tcp/45000/p2p/<id>"]` on the member group; derive `<id>` from any unused nodekey with `lib/manifest.py`'s `peer_id()`. A module member only gets them through a profile with `@BOOTSTRAPS@` (the fleet profiles have none) |
-| "a Z min test" | `./harness.sh run <Z*60>` — not a manifest field |
-| "on module / delivery / libp2p commit or branch X" | environment variables, see below |
+| "a Z min test" | `./harness.sh run <Z*60>`, or `"duration": Z*60` in the manifest (then `run` needs no seconds, and `suite` can run it) |
+| "on module / delivery / libp2p commit or branch X" | `overrides` plus an `image` of its own in the manifest, or environment variables; see below |
+| "send N messages", "a sender" | a `delivery-module` member group with `"env": {"SEND_COUNT": "N", "SEND_INTERVAL": "…", "SEND_AFTER": "…"}`; the fleet needs a store node for plain sends (copy `examples/msg-smoke.json`) |
+| "over mix", "anonymous sends" | fixed-key mix nodes and a sender with `"config": "member-mix-static.json.tpl"`, `ANONYMITY_LEVEL` `Required` (copy `examples/mix-static-smoke.json`); for a large one, `lib/gen_mixnet.py` |
+| "these sends must fail" | `"expect": "error"` on that sender group; `"any"` when it should not be judged |
+| "with RLN", "rate limited" | `"rln": {}`, `RLN=1` on `delivery-module` groups, an `image` of its own (copy `examples/rln-smoke.json` or `mix-rln-smoke.json`) |
+| "advertise / look up services", "service discovery load" | `"kind": "sd-agent"` groups with `SD_*` env (copy `examples/sd-smoke.json`) |
+| "run these cases one after another" | `./harness.sh suite [--build] <manifest>...`; each needs a `duration` |
 
 Group names become Prometheus labels and show up in the report: name them after
 what they are (`late-2min`, `leave-10min`), not `g3`.
@@ -93,6 +105,19 @@ to `build` and to `run`. `./harness.sh resolve` prints what each component
 resolves to and whether it came from the lock or an override — run it and
 check it before a long build.
 
+Prefer writing the pin into the manifest, with an image of its own:
+
+```json
+"image": "logos-sim:pr1234",
+"overrides": { "logos-delivery": { "rev": "<full sha>" } }
+```
+
+Then nothing has to be repeated in the environment, the default image is not
+replaced, and builds of several revisions can be run in any order or in one
+`suite`. `up` and `run` refuse to start when the manifest's image is not built.
+The environment still wins over the manifest (`IMAGE`, `<PREFIX>_REF`), so
+leave those unset when running a manifest that pins its own build.
+
 ## Build
 
 ```bash
@@ -103,6 +128,12 @@ Typically 5–20 minutes with a warm cache (a changed logos-delivery rebuilds th
 Nim library, the slow part), much longer cold. Rebuild when the pins change or
 `docker/`/`conf/` changed. A failed build shows its nix error at the end of the
 log.
+
+Build with the manifest you will run: it decides the image tag, whether the RLN
+modules and the LEZ chain are built (`"rln"`; over an hour the first time), and
+whether the demo is. Every image is made from the same `out/` staging area, so
+builds run one at a time; an image that exists is not affected by a later build
+of another manifest.
 
 ## Run
 
@@ -127,6 +158,16 @@ Timing, precisely:
   and leaves the stack running (for Grafana at `http://localhost:3000`). Always
   finish with `./harness.sh collect` and `./harness.sh down -v`.
 
+Several manifests, each with a `duration`:
+
+```bash
+./harness.sh suite --build examples/msg-smoke.json examples/mix-static-smoke.json > out/suite.log 2>&1
+```
+
+Results land in `out/collect/suite-<utc-stamp>/<name>/`, with `summary.txt`
+(one verdict per manifest) and each run's console output in `<name>.log`. The
+exit status is 1 when any manifest failed.
+
 **An experiment the operator drives** ("let me attach it myself", "I want to
 watch it"): use `up`, not `run`, and leave the stack running. Report what is up,
 the noVNC URLs `gen` printed, and the exact `./harness.sh start` / `stop`
@@ -150,9 +191,14 @@ For a mid-run look without disturbing anything: `./harness.sh collect <dir>`
 | `stages.txt` | per delivery-module and delivery-demo node: `load-module … OK`, `createNode OK`, `start OK (Ns)` — start judged by the node's own `nodeStarted` event, not the call — then `subscribe`, `openmetrics` (a delivery-demo logs only `start` and `subscribe`). `start FAILED: <reason>` means the container exited. `module lost: <module> at <utc>` means a module host crashed mid-run. |
 | `report.txt` | discovery summary over the delivery-module and delivery-demo nodes' traces (a logosdeliverynode writes none; judge those from Prometheus and their logs): members ready/advertised, first-lookup latency, empty lookups, records per lookup, coverage of the expected id set, per-member table |
 | `m*.trace`, `<module bootstrap>.trace` | every call across the discovery plugin boundary, with timestamps, per traced node |
-| `delivery.txt` | only with a sender group (`SEND_COUNT` in its `env`): per-message outcome matched across nodes — accepted, `messagePropagated`, `messageSent`, `messageError` reasons, received by every other delivery-module node, verdict |
-| `m*.send.jsonl`, `m*.msg.jsonl` | a sender's send calls with their replies; every delivery_module event a node saw (`messageReceived` and the sender's own outcome events) |
-| `q_mixpool.json` | `mix_pool_size` per mix-mounted node over the last 30 min: when a node knew enough usable mix nodes (4) to build a path |
+| `delivery.txt` | only with a sender group (`SEND_COUNT` in its `env`): per-message outcome matched across nodes — accepted, `messagePropagated`, `messageSent`, `messageError` reasons, received by every other delivery-module node. From 50 sends up: latency percentiles, 5-minute steps, mix exit distribution and tries, per-node mix load, CPU and memory. Ends in `verdict: PASS` / `FAIL`, judged against each sender group's `expect`; an `expected of <node>` line names a sender whose messages came to something else. Sends without an outcome in the last 60 s are "in flight" and not judged |
+| `m*.send.jsonl`, `m*.msg.jsonl` | a sender's send calls with their replies; every delivery_module event a node saw (`messageReceived` and the sender's own outcome events), each with the node's clock in ns (`rx`) |
+| `q_mixpool.json` | `mix_pool_size` per mix-mounted node since T0: when a node knew enough usable mix nodes (4) to build a path, and when a stopped one left its pool |
+| `mixlog.txt` | per node: `<node> exit <message hash>` for every message it published as mix exit, `<node> try <hash> <n>` for every try of a sender |
+| `q_mixload.json` | mix packets received, forwarded and failed, and reply timeouts, per node |
+| `stats.tsv` | after `run`: seconds from T0, container, CPU %, memory, every 30 s |
+| `*.sd.jsonl` | sd-agent events; read with `python3 lib/sd_report.py <dir>` |
+| `warnings.txt` | only when something could not be collected (a node whose log did not come back): say so in the report, the route data then lacks that node |
 | `ps.txt` | container states at collection; stopped-by-schedule groups show `exited` |
 | `mN.png` | a screenshot of each running delivery-demo, taken through its QML inspector at collection |
 | `q_up.json`, `q_peers.json`, `q_relay.json` | Prometheus at collection: `up`; `logos_delivery_connected_peers_per_shard` (delivery-module nodes only); relay connections per node, in + out, for both kinds |
@@ -212,7 +258,8 @@ Lead with the verdict in one sentence, then:
   node's id can keep coming back from lookups for up to that long after the
   stop. That is expected, not a leak.
 - A mix pool fed by discovery alone takes about 16-17 min to become usable:
-  `/mix/1.0.0` is a node's second advertised service, its first advert showed
+  `/mix/1.0.0` is a node's second advertised service, which registrars
+  penalise for IP similarity with the node's own first advert. Its first advert showed
   up in lookups ~11 min after start and the 4th usable mix node ~16.5 min
   (measured with 4 mix nodes). A `Required` sender fails
   every send until then, so run such a manifest for 25 min or more, or hand
@@ -227,6 +274,15 @@ Lead with the verdict in one sentence, then:
 
 - **RLN runs** (`"rln"` section, `RLN=1`): only `delivery-module` nodes take part.
   The local chain needs about a minute before the first membership is active.
-  `examples/rln-smoke.json` ends in FAIL by design (its sender without a membership).
   In `delivery.txt`, "receptions of other messages" are Mix RLN coordination frames.
-  Never edit `harness.sh` while one of its commands is running.
+  RLN is CPU-heavy: on a 10-core docker VM, 22 RLN nodes with Mix RLN at 0.8
+  messages per second used 4.3 cores, and 45 at 1.6 per second saturated the
+  host (proofs took 9-10 s, 98 % of sends failed). Check `stats.tsv` before
+  reading such a run as a protocol result.
+- **Exit-node miss on logos-delivery master `39b5f4ee`**: a delivery-module node
+  that mounts mix and is picked as the exit of a message gets no
+  `messageReceived` for it. `examples/mix-rln-smoke.json` ends in FAIL for
+  this. The same build reports false send errors after a mix node stops.
+- **A mix build that restricts mix to public addresses** (the #4631 stack,
+  #4729) needs `--mix-allow-all-addresses=true` on native mix nodes and
+  `MIX_ALLOW_ALL=1` on module ones; master rejects that option.
