@@ -30,7 +30,17 @@ tpl=/opt/sim/conf/$MEMBER_CONFIG
 bootstraps=""
 # BOOTSTRAP_ADDR may list several, comma-separated: each becomes a JSON string.
 [ -n "$BOOTSTRAP_ADDR" ] && bootstraps="\"${BOOTSTRAP_ADDR//,/\",\"}\""
+# MIXNODES: the manifest's fixed-key mix nodes (<multiaddr>:<mix pubkey>,...).
+mixnodes=""
+[ -n "${MIXNODES:-}" ] && mixnodes="\"${MIXNODES//,/\",\"}\""
+# MIX_ALLOW_ALL=1: let mix use private addresses, which this network is made of.
+# Only for a logos-delivery that has the option (logos-delivery#4631, #4729);
+# an older one refuses the unknown key.
+mixallow=""
+[ "${MIX_ALLOW_ALL:-0}" = 1 ] && mixallow='"mix-allow-all-addresses": true,'
 sed -e "s|@IP@|$IP|g" -e "s|@BOOTSTRAPS@|$bootstraps|g" -e "s|@LOOKUP@|$LOOKUP|g" \
+    -e "s|@MIX_ALLOW_ALL@|$mixallow|g" \
+    -e "s|@MIXNODES@|$mixnodes|g" -e "s|@ANONYMITY@|${ANONYMITY_LEVEL:-Preferred}|g" \
     -e "s|@CLUSTER@|$CLUSTER_ID|g" -e "s|@SHARDS@|$NUM_SHARDS|g" \
     -e "s|@TCP_PORT@|$TCP_PORT|g" \
     "$tpl" > /data/member.json
