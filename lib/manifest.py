@@ -5,6 +5,7 @@ declares the node groups. Everything else is derived (see resolve.py).
 """
 import json
 import os
+import re
 import sys
 
 # Component -> the flake output to build. Keys are node names in the module's
@@ -466,8 +467,13 @@ def outputs(m):
 
 
 def image(m):
-    """The runtime image of this manifest; IMAGE in the environment wins."""
-    return os.environ.get("IMAGE") or m["image"]
+    """The runtime image of this manifest; IMAGE in the environment wins.
+    The name goes into the generated compose file as it is, so it must be a
+    plain image reference."""
+    name = os.environ.get("IMAGE") or m["image"]
+    if not re.fullmatch(r"[A-Za-z0-9._/-]+(:[A-Za-z0-9._-]+)?(@sha256:[0-9a-f]{64})?", name):
+        _fail(f"image {name!r} is not an image reference (name[:tag][@sha256:digest])")
+    return name
 
 
 def uses_demo(m):
