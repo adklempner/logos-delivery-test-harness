@@ -17,6 +17,9 @@ pool (MIXNODES) and sends from the start, without waiting for discovery.
   --stop N --stop-at S       the last N mix nodes are stopped S seconds from T0
                              (`harness.sh start <group>...` brings them back)
   --count C --interval I --send-after A   per sender: C messages, one every I s
+  --delivery-rev SHA         build logos-delivery at this commit (overrides.logos-delivery)
+  --image NAME               the image of that build, e.g. logos-sim:pr4647
+  --duration S               how long `run` and `suite` let it run
 """
 import argparse
 import hashlib
@@ -48,6 +51,9 @@ def main():
     ap.add_argument("--count", type=int, default=700)
     ap.add_argument("--interval", type=int, default=5)
     ap.add_argument("--send-after", type=int, default=120)
+    ap.add_argument("--delivery-rev")
+    ap.add_argument("--image")
+    ap.add_argument("--duration", type=int)
     a = ap.parse_args()
     if a.rln and a.mix_kind != "module":
         ap.error("--rln needs --mix-kind module: a logosdeliverynode has no LEZ RLN backend")
@@ -89,8 +95,14 @@ def main():
                            "SEND_COUNT": str(a.count), "SEND_INTERVAL": str(a.interval),
                            "SEND_AFTER": str(a.send_after), **allow_env, **mix_rln_env}})
 
-    out = {"_comment": ["generated: lib/gen_mixnet.py " + " ".join(sys.argv[1:])],
-           "module": base["module"], "overrides": base["overrides"]}
+    out = {"_comment": ["generated: lib/gen_mixnet.py " + " ".join(sys.argv[1:])]}
+    if a.image:
+        out["image"] = a.image
+    if a.duration:
+        out["duration"] = a.duration
+    out.update(module=base["module"], overrides=base["overrides"])
+    if a.delivery_rev:
+        out["overrides"]["logos-delivery"] = {"rev": a.delivery_rev}
     if a.rln:
         out["rln"] = {}
     out["network"] = base["network"]

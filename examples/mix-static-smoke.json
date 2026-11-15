@@ -3,8 +3,12 @@
     "Mix smoke with a static pool: 1 bootstrap (kad entry, store), 4 fixed-key mix nodes",
     "(relay + lightpush + mix; hop and exit), 2 plain receivers, 1 sender with anonymityLevel Required",
     "that is handed the 4 mix nodes as its pool (@MIXNODES@, derived from the groups' --mixkey).",
-    "HARNESS_MANIFEST=examples/mix-static-smoke.json COLLECT_LOGS=all ./harness.sh run 240 out/collect/mix-static"
+    "HARNESS_MANIFEST=examples/mix-static-smoke.json COLLECT_LOGS=all ./harness.sh run out/collect/mix-static",
+    "Pinned to the logos-delivery commit this case was recorded on (overrides.logos-delivery);",
+    "drop that override and the image to run it on what the module's lock names."
   ],
+  "image": "logos-sim:master-39b5f4ee",
+  "duration": 240,
   "module": {
     "_comment": [
       "Override without editing this file:",
@@ -29,6 +33,9 @@
     "logos-logoscore-cli": {
       "flake": "github:logos-co/logos-logoscore-cli",
       "rev": "665ac28bc77f45e3c610f40fef975a12609de531"
+    },
+    "logos-delivery": {
+      "rev": "39b5f4ee9b7712e8d5768414ca12ea3aeb7f1aa8"
     }
   },
   "network": {

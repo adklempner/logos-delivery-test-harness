@@ -3,9 +3,13 @@
     "Mix over an RLN-protected network: 1 bootstrap (native, store), 4 delivery-module mix nodes (relay + lightpush + mix,",
     "fixed NODEKEY/MIXKEY, Relay RLN validation and Mix RLN on the same registry), 2 validating members, and 1 sender with",
     "anonymityLevel Required whose pool is the 4 mix nodes. Every RLN node registers a membership on the local LEZ chain.",
-    "HARNESS_MANIFEST=examples/mix-rln-smoke.json COLLECT_LOGS=all ./harness.sh run 480 out/collect/mix-rln-smoke",
-    "Expect delivery.txt: 10/10 propagated via mix and received by both members."
+    "HARNESS_MANIFEST=examples/mix-rln-smoke.json COLLECT_LOGS=all ./harness.sh run out/collect/mix-rln-smoke",
+    "Expect delivery.txt: 10/10 propagated via mix and received by both members.",
+    "Pinned to the logos-delivery commit this case was recorded on (overrides.logos-delivery);",
+    "drop that override and the image to run it on what the module's lock names."
   ],
+  "image": "logos-sim:master-39b5f4ee-rln",
+  "duration": 480,
   "module": {
     "_comment": [
       "Override without editing this file:",
@@ -30,6 +34,9 @@
     "logos-logoscore-cli": {
       "flake": "github:logos-co/logos-logoscore-cli",
       "rev": "665ac28bc77f45e3c610f40fef975a12609de531"
+    },
+    "logos-delivery": {
+      "rev": "39b5f4ee9b7712e8d5768414ca12ea3aeb7f1aa8"
     }
   },
   "rln": {
