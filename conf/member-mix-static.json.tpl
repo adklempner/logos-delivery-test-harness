@@ -6,6 +6,7 @@
   "anonymityLevel": "@ANONYMITY@",
   "mixnode": [@MIXNODES@],
   @MIX_ALLOW_ALL@
+  @MIX_RLN@
   "kad-bootstrap-node": [@BOOTSTRAPS@],
   "kad-service-lookup-interval": @LOOKUP@,
   "discv5-discovery": false,

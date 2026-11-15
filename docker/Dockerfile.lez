@@ -1,0 +1,9 @@
+# The LEZ services of an RLN run (lez-init, lez-setup): logos-lez-rln's tools,
+# prebuilt by `harness build` into out/lez-tools, and docker/lez.py around them.
+FROM ubuntu:24.04
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates libpcsclite1 python3 && \
+    rm -rf /var/lib/apt/lists/*
+COPY out/lez-tools/lez-rln /opt/lez-rln
+COPY docker/lez.py /opt/sim/lez.py
+ENTRYPOINT ["python3", "/opt/sim/lez.py"]

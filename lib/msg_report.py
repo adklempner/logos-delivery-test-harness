@@ -124,9 +124,14 @@ def main(d):
           "   (needs a store node to validate against)")
     print(f"  messageError:         {len(errors)}/{total}")
     print(f"  reached all receivers: {n_full}/{total}")
-    dup = sum(c - 1 for r in received.values() for c in r.values() if c > 1)
+    # Only the sent payloads: a node also reports what else it relays, such as
+    # Mix RLN coordination frames.
+    sent = {s[1] for s in sends}
+    dup = sum(c - 1 for r in received.values() for p, c in r.items() if p in sent and c > 1)
+    other = sum(c for r in received.values() for p, c in r.items() if p not in sent)
     print(f"  duplicate receptions: {dup}; by source: "
-          + (", ".join(f"{k} {v}" for k, v in sorted(sources.items(), key=str)) or "-"))
+          + (", ".join(f"{k} {v}" for k, v in sorted(sources.items(), key=str)) or "-")
+          + (f"; receptions of other messages: {other}" if other else ""))
 
     if len(per) > 1:
         for s, c in sorted(per.items()):

@@ -45,8 +45,53 @@ retry() { # <label> <cmd...>: three attempts, replies get lost under load
 # (plugin-kad-discovery), and a node configured that way refuses to start
 # without it.
 retry "load-module libp2p_module" logoscore load-module libp2p_module
+# The RLN modules are optional dependencies too: delivery_module forwards every
+# RLN request to liblogos_rln_module, which reads the registry through
+# liblogos_lez_rln_module.
+if [ "${RLN:-0}" = 1 ]; then
+  retry "load-module liblogos_lez_rln_module" logoscore load-module liblogos_lez_rln_module
+  retry "load-module liblogos_rln_module" logoscore load-module liblogos_rln_module
+fi
 retry "load-module delivery_module" logoscore load-module delivery_module
 retry "createNode" logoscore call delivery_module createNode @/data/member.json
+
+# delivery_module's RLN identifier, sha256("rln/logos-delivery/v0.0.1").
+RLN_IDENTIFIER=5e269b6a19fce081f5808b13442dcbc3522197638dd38df5a28bc4e55236b977
+poll() { # <label> <timeout s> <ok regex> <fail regex> <cmd...>: poll a call's reply
+  local label=$1 timeout=$2 ok=$3 bad=$4 n=0; shift 4
+  while :; do
+    "$@" >/tmp/poll.out 2>&1
+    if grep -qE "$ok" /tmp/poll.out; then log "$label OK (${n}s)"; return 0; fi
+    if grep -qE "$bad" /tmp/poll.out; then
+      log "$label FAILED: $(tr '\n' ' ' </tmp/poll.out | cut -c1-400)"; return 1
+    fi
+    sleep 1; n=$((n + 1))
+    if [ "$n" -ge "$timeout" ]; then
+      log "$label FAILED: not within ${timeout}s: $(tr '\n' ' ' </tmp/poll.out | cut -c1-400)"; return 1
+    fi
+  done
+}
+# RLN comes up on its own thread after createNode. A node sends only with an
+# active membership, which its RLN module registers by itself once its LEZ payer
+# holds a balance: ask lez-setup for that (/lez/fund), and wait for both.
+# RLN_MEMBERSHIP=0 leaves the node without one: it validates, and its sends fail.
+if [ "${RLN:-0}" = 1 ]; then
+  poll "rlnState Ready" "${RLN_READY_TIMEOUT:-60}" 'Ready' 'Failed' \
+    logoscore call delivery_module rlnState || { kill $DAEMON; exit 1; }
+  if [ "${RLN_MEMBERSHIP:-1}" = 1 ]; then
+    poll "LEZ wallet ready" "${RLN_WALLET_TIMEOUT:-120}" 'state[^a-z]+ready' 'state[^a-z]+failed' \
+      logoscore call liblogos_lez_rln_module wallet_status || { kill $DAEMON; exit 1; }
+    payer=$(grep -oE 'payer[^A-Za-z0-9]+[A-Za-z0-9]+' /tmp/poll.out | grep -oE '[A-Za-z0-9]+$' | head -1)
+    echo "$payer" > "/lez/fund/$(hostname).tmp" && mv "/lez/fund/$(hostname).tmp" "/lez/fund/$(hostname)"
+    # lez-setup answers in /lez/funded: "ok", or the error.
+    funded() { cat "/lez/funded/$(hostname)" 2>/dev/null; }
+    poll "LEZ payer $payer funded" "${RLN_FUND_TIMEOUT:-300}" '^ok' '.' funded ||
+      { kill $DAEMON; exit 1; }
+    poll "RLN membership active" "${RLN_MEMBERSHIP_TIMEOUT:-300}" 'state[^a-z]+active' 'state[^a-z]+failed|refused' \
+      logoscore call liblogos_rln_module get_membership_state \
+        "$(cat /lez/registry-id)" "$RLN_IDENTIFIER" || { kill $DAEMON; exit 1; }
+  fi
+fi
 
 # start only dispatches: the node reports how it went later, through the
 # nodeStarted event, and stops itself again if it failed. So "start OK" from the

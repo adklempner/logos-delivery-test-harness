@@ -1,0 +1,117 @@
+{
+  "_comment": [
+    "Relay RLN smoke on a local LEZ chain: 1 bootstrap (native, store; no RLN, so it relays and stores anything),",
+    "2 validating delivery-module members with an RLN membership, 1 validating member without one that also sends,",
+    "and 1 sender with a membership. The \"rln\" section adds the LEZ sequencer and the registry setup.",
+    "./harness.sh build with this manifest first (RLN modules, LEZ tools and sequencer), then",
+    "HARNESS_MANIFEST=examples/rln-smoke.json COLLECT_LOGS=all ./harness.sh run 420 out/collect/rln-smoke",
+    "Expect: every message of the member sender received by all; every send of the one without a membership a messageError."
+  ],
+  "module": {
+    "_comment": [
+      "Override without editing this file:",
+      "  DELIVERY_MODULE_REF=<branch|tag|full-sha>  DELIVERY_MODULE_REV=<full-sha>",
+      "and likewise DELIVERY_*, LIBP2P_MODULE_*, OPENMETRICS_MODULE_*,",
+      "LOGOSCORE_CLI_* for the dependencies this module otherwise chooses.",
+      "A branch is not a pin: out/resolved.json records the commit it resolved to."
+    ],
+    "flake": "git+https://github.com/logos-co/logos-delivery-module",
+    "ref": "master"
+  },
+  "overrides": {
+    "_comment": [
+      "Only what the chosen module ref cannot supply, or what we deliberately",
+      "differ on. master pins libp2p_module, openmetrics-module and",
+      "logos-delivery in its flake lock, so those are derived.",
+      "logos-logoscore-cli is not the module's own input: its lock only carries",
+      "copies pulled in by other inputs (libp2p_module, logos-test-modules), and",
+      "its docker-compose runs yet another. The harness keeps running 665ac28b,",
+      "the version every recorded run used. `harness.sh resolve` shows each source."
+    ],
+    "logos-logoscore-cli": {
+      "flake": "github:logos-co/logos-logoscore-cli",
+      "rev": "665ac28bc77f45e3c610f40fef975a12609de531"
+    }
+  },
+  "rln": {
+    "epochSizeSec": 10
+  },
+  "network": {
+    "subnet": "10.0.0.0/8",
+    "clusterId": 42,
+    "shardsInNetwork": 1
+  },
+  "groups": [
+    {
+      "name": "bootstrap",
+      "role": "bootstrap",
+      "kind": "logosdeliverynode",
+      "count": 1,
+      "startAfter": 0,
+      "ip": "10.0.0.10",
+      "nodekey": "9999999999999999999999999999999999999999999999999999999999999999",
+      "args": [
+        "--entry-layer=kernel",
+        "--relay=true",
+        "--enable-kad-discovery=true",
+        "--discv5-discovery=false",
+        "--peer-exchange=false",
+        "--rendezvous=false",
+        "--dns-discovery=false",
+        "--rest=false",
+        "--metrics-logging=false",
+        "--kad-service-lookup-interval=15",
+        "--max-pure-libp2p-peers=200",
+        "--log-level=DEBUG",
+        "--store=true",
+        "--store-message-db-url=sqlite:///tmp/store.sqlite3"
+      ]
+    },
+    {
+      "name": "members",
+      "role": "member",
+      "kind": "delivery-module",
+      "count": 2,
+      "startAfter": 0,
+      "jitter": 8,
+      "config": "member.json.tpl",
+      "env": {
+        "LOOKUP_INTERVAL": "15",
+        "RLN": "1"
+      }
+    },
+    {
+      "name": "sender",
+      "role": "member",
+      "kind": "delivery-module",
+      "count": 1,
+      "startAfter": 0,
+      "jitter": 8,
+      "config": "member.json.tpl",
+      "env": {
+        "LOOKUP_INTERVAL": "15",
+        "SEND_COUNT": "10",
+        "SEND_INTERVAL": "3",
+        "SEND_AFTER": "30",
+        "RLN": "1"
+      }
+    },
+    {
+      "name": "nomember",
+      "role": "member",
+      "kind": "delivery-module",
+      "count": 1,
+      "startAfter": 0,
+      "jitter": 8,
+      "config": "member.json.tpl",
+      "env": {
+        "LOOKUP_INTERVAL": "15",
+        "SEND_COUNT": "5",
+        "SEND_INTERVAL": "3",
+        "SEND_AFTER": "30",
+        "RLN": "1",
+        "RLN_MEMBERSHIP": "0"
+      }
+    }
+  ]
+}

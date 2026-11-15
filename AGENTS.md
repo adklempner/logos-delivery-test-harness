@@ -224,3 +224,9 @@ Lead with the verdict in one sentence, then:
   `"env": {"START_TIMEOUT": "300"}`, and report the fleet's state rather than a
   regression. Fleet members also dial out only: they advertise their docker
   address, so the fleet cannot dial them back.
+
+- **RLN runs** (`"rln"` section, `RLN=1`): only `delivery-module` nodes take part.
+  The local chain needs about a minute before the first membership is active.
+  `examples/rln-smoke.json` ends in FAIL by design (its sender without a membership).
+  In `delivery.txt`, "receptions of other messages" are Mix RLN coordination frames.
+  Never edit `harness.sh` while one of its commands is running.
