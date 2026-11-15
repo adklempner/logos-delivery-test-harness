@@ -378,7 +378,7 @@ footer .l{font-family:var(--head);color:#fff;font-size:1.1rem}
   </ul>
 
   <h3>Earlier run: a mix pool fed by service discovery</h3>
-  <p>The four cases above hand every sender a static pool. One earlier run, on master <code>39b5f4ee</code>, did not (<code>examples/mix-disco-smoke.json</code>): 4 native mix nodes advertising <code>/mix/1.0.0</code>, 2 receivers, and 1 <code>Required</code> sender given no mix nodes, so its pool could fill only through Kad service discovery. It ran for 28 minutes with a send every 20&nbsp;s.</p>
+  <p>The four cases above hand every sender a static pool. One earlier run, on master <code>39b5f4ee</code>, did not (<code>manifests/mix-disco-smoke.json</code>): 4 native mix nodes advertising <code>/mix/1.0.0</code>, 2 receivers, and 1 <code>Required</code> sender given no mix nodes, so its pool could fill only through Kad service discovery. It ran for 28 minutes with a send every 20&nbsp;s.</p>
   <div class="tw"><table>
     <tr><th>Event</th><th class="n">After the sender's first send</th></tr>
     <tr><td>First <code>/mix/1.0.0</code> advert returned by a lookup; sender pool = 1</td><td class="n">668 s (about 11 min)</td></tr>
@@ -390,7 +390,7 @@ footer .l{font-family:var(--head);color:#fff;font-size:1.1rem}
   <ul>
     <li><b>Discovery alone works, after a quarter of an hour.</b> All 49 sends before the pool filled failed with "knows fewer than 4 usable mix nodes". All 31 sends after it succeeded and reached both receivers, at a median of 476&nbsp;ms.</li>
     <li><b>The delay is on the registration side.</b> On <code>mix1</code>, the other mix nodes' <code>/mix/1.0.0</code> adverts were found exactly 600&nbsp;s after they started advertising. Their <code>/logos/delivery</code> adverts, registered at the same moment, were found within seconds.</li>
-    <li><b>Cause: mix is the second service a node advertises, and a registrar penalises it for IP similarity.</b> A registrar makes an advertiser wait according to how many address bits it shares with the adverts it already holds, and the node's own first advert is already there from the same address. The cause is confirmed by a logos-delivery developer; the run itself shows only the timing, since registrars log no wait times. It matches the service-discovery campaign, which measured about 15 minutes of wait per extra service at each registrar (<code>experiments/sd-corner-cases</code>, finding 4).</li>
+    <li><b>Cause: mix is the second service a node advertises, and a registrar penalises it for IP similarity.</b> A registrar makes an advertiser wait according to how many address bits it shares with the adverts it already holds, and the node's own first advert is already there from the same address. The cause is confirmed by a logos-delivery developer; the run itself shows only the timing, since registrars log no wait times. It matches the service-discovery campaign, which measured about 15 minutes of wait per extra service at each registrar (branch <code>experiment/sd-corner-cases</code>, finding 4).</li>
     <li><b>What it means for issue 183.</b> With discovery alone, a <code>Required</code> node cannot send for its first quarter of an hour, and a <code>Preferred</code> node sends without mix during that time. The <code>logos.dev</code> and <code>logos.test</code> presets avoid this by seeding mix nodes; a custom cluster has no such seed.</li>
     <li><b>Not repeated on the PR stack.</b> #4646 changes who advertises mix, and that was not exercised: every stack run used a static pool.</li>
   </ul>

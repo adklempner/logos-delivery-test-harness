@@ -1,0 +1,258 @@
+{
+  "_comment": [
+    "Payload size against the mix limit, 4 fixed-key mix nodes: Required senders of 1000, 3000 and",
+    "20000 byte payloads, and a Preferred sender of 20000 bytes (logos-delivery#4690: it falls back to",
+    "the plain path without telling the app).",
+    "HARNESS_MANIFEST=examples/mix-oversize.json COLLECT_LOGS=all ./harness.sh run out/collect/mix-oversize",
+    "Pinned to the logos-delivery commit this case was recorded on (overrides.logos-delivery);",
+    "drop that override and the image to run it on what the module's lock names."
+  ],
+  "image": "logos-sim:master-39b5f4ee",
+  "duration": 200,
+  "module": {
+    "_comment": [
+      "Override without editing this file:",
+      "  DELIVERY_MODULE_REF=<branch|tag|full-sha>  DELIVERY_MODULE_REV=<full-sha>",
+      "and likewise DELIVERY_*, LIBP2P_MODULE_*, OPENMETRICS_MODULE_*,",
+      "LOGOSCORE_CLI_* for the dependencies this module otherwise chooses.",
+      "A branch is not a pin: out/resolved.json records the commit it resolved to."
+    ],
+    "flake": "git+https://github.com/logos-co/logos-delivery-module",
+    "ref": "master"
+  },
+  "overrides": {
+    "_comment": [
+      "Only what the chosen module ref cannot supply, or what we deliberately",
+      "differ on. master pins libp2p_module, openmetrics-module and",
+      "logos-delivery in its flake lock, so those are derived.",
+      "logos-logoscore-cli is not the module's own input: its lock only carries",
+      "copies pulled in by other inputs (libp2p_module, logos-test-modules), and",
+      "its docker-compose runs yet another. The harness keeps running 665ac28b,",
+      "the version every recorded run used. `harness.sh resolve` shows each source."
+    ],
+    "logos-logoscore-cli": {
+      "flake": "github:logos-co/logos-logoscore-cli",
+      "rev": "665ac28bc77f45e3c610f40fef975a12609de531"
+    },
+    "logos-delivery": {
+      "rev": "39b5f4ee9b7712e8d5768414ca12ea3aeb7f1aa8"
+    }
+  },
+  "network": {
+    "subnet": "10.0.0.0/8",
+    "clusterId": 42,
+    "shardsInNetwork": 1
+  },
+  "groups": [
+    {
+      "name": "bootstrap",
+      "role": "bootstrap",
+      "kind": "logosdeliverynode",
+      "count": 1,
+      "startAfter": 0,
+      "ip": "10.0.0.10",
+      "nodekey": "9999999999999999999999999999999999999999999999999999999999999999",
+      "args": [
+        "--entry-layer=kernel",
+        "--relay=true",
+        "--enable-kad-discovery=true",
+        "--discv5-discovery=false",
+        "--peer-exchange=false",
+        "--rendezvous=false",
+        "--dns-discovery=false",
+        "--rest=false",
+        "--metrics-logging=false",
+        "--kad-service-lookup-interval=15",
+        "--max-pure-libp2p-peers=200",
+        "--log-level=DEBUG",
+        "--store=true",
+        "--store-message-db-url=sqlite:///tmp/store.sqlite3"
+      ]
+    },
+    {
+      "name": "mix1",
+      "role": "bootstrap",
+      "kind": "logosdeliverynode",
+      "count": 1,
+      "startAfter": 0,
+      "ip": "10.0.1.20",
+      "nodekey": "1111111111111111111111111111111111111111111111111111111111111111",
+      "args": [
+        "--entry-layer=kernel",
+        "--relay=true",
+        "--enable-kad-discovery=true",
+        "--discv5-discovery=false",
+        "--peer-exchange=false",
+        "--rendezvous=false",
+        "--dns-discovery=false",
+        "--rest=false",
+        "--metrics-logging=false",
+        "--kad-service-lookup-interval=15",
+        "--max-pure-libp2p-peers=200",
+        "--log-level=DEBUG",
+        "--lightpush=true",
+        "--mix=true",
+        "--mixkey=1111111111111111111111111111111111111111111111111111111111111111"
+      ]
+    },
+    {
+      "name": "mix2",
+      "role": "bootstrap",
+      "kind": "logosdeliverynode",
+      "count": 1,
+      "startAfter": 0,
+      "ip": "10.0.2.20",
+      "nodekey": "2222222222222222222222222222222222222222222222222222222222222222",
+      "args": [
+        "--entry-layer=kernel",
+        "--relay=true",
+        "--enable-kad-discovery=true",
+        "--discv5-discovery=false",
+        "--peer-exchange=false",
+        "--rendezvous=false",
+        "--dns-discovery=false",
+        "--rest=false",
+        "--metrics-logging=false",
+        "--kad-service-lookup-interval=15",
+        "--max-pure-libp2p-peers=200",
+        "--log-level=DEBUG",
+        "--lightpush=true",
+        "--mix=true",
+        "--mixkey=2222222222222222222222222222222222222222222222222222222222222222"
+      ]
+    },
+    {
+      "name": "mix3",
+      "role": "bootstrap",
+      "kind": "logosdeliverynode",
+      "count": 1,
+      "startAfter": 0,
+      "ip": "10.0.3.20",
+      "nodekey": "3333333333333333333333333333333333333333333333333333333333333333",
+      "args": [
+        "--entry-layer=kernel",
+        "--relay=true",
+        "--enable-kad-discovery=true",
+        "--discv5-discovery=false",
+        "--peer-exchange=false",
+        "--rendezvous=false",
+        "--dns-discovery=false",
+        "--rest=false",
+        "--metrics-logging=false",
+        "--kad-service-lookup-interval=15",
+        "--max-pure-libp2p-peers=200",
+        "--log-level=DEBUG",
+        "--lightpush=true",
+        "--mix=true",
+        "--mixkey=3333333333333333333333333333333333333333333333333333333333333333"
+      ]
+    },
+    {
+      "name": "mix4",
+      "role": "bootstrap",
+      "kind": "logosdeliverynode",
+      "count": 1,
+      "startAfter": 0,
+      "ip": "10.0.4.20",
+      "nodekey": "4444444444444444444444444444444444444444444444444444444444444444",
+      "args": [
+        "--entry-layer=kernel",
+        "--relay=true",
+        "--enable-kad-discovery=true",
+        "--discv5-discovery=false",
+        "--peer-exchange=false",
+        "--rendezvous=false",
+        "--dns-discovery=false",
+        "--rest=false",
+        "--metrics-logging=false",
+        "--kad-service-lookup-interval=15",
+        "--max-pure-libp2p-peers=200",
+        "--log-level=DEBUG",
+        "--lightpush=true",
+        "--mix=true",
+        "--mixkey=4444444444444444444444444444444444444444444444444444444444444444"
+      ]
+    },
+    {
+      "name": "members",
+      "role": "member",
+      "kind": "delivery-module",
+      "count": 2,
+      "startAfter": 0,
+      "jitter": 8,
+      "config": "member.json.tpl",
+      "env": {
+        "LOOKUP_INTERVAL": "15"
+      }
+    },
+    {
+      "name": "req1000",
+      "role": "member",
+      "kind": "delivery-module",
+      "count": 1,
+      "startAfter": 0,
+      "jitter": 8,
+      "config": "member-mix-static.json.tpl",
+      "env": {
+        "LOOKUP_INTERVAL": "15",
+        "ANONYMITY_LEVEL": "Required",
+        "SEND_AFTER": "90",
+        "SEND_COUNT": "6",
+        "SEND_INTERVAL": "5",
+        "SEND_SIZE": "1000"
+      }
+    },
+    {
+      "name": "req3000",
+      "role": "member",
+      "kind": "delivery-module",
+      "count": 1,
+      "startAfter": 0,
+      "jitter": 8,
+      "config": "member-mix-static.json.tpl",
+      "env": {
+        "LOOKUP_INTERVAL": "15",
+        "ANONYMITY_LEVEL": "Required",
+        "SEND_AFTER": "90",
+        "SEND_COUNT": "6",
+        "SEND_INTERVAL": "5",
+        "SEND_SIZE": "3000"
+      }
+    },
+    {
+      "name": "req20000",
+      "role": "member",
+      "kind": "delivery-module",
+      "count": 1,
+      "startAfter": 0,
+      "jitter": 8,
+      "config": "member-mix-static.json.tpl",
+      "env": {
+        "LOOKUP_INTERVAL": "15",
+        "ANONYMITY_LEVEL": "Required",
+        "SEND_AFTER": "90",
+        "SEND_COUNT": "6",
+        "SEND_INTERVAL": "5",
+        "SEND_SIZE": "20000"
+      },
+      "expect": "error"
+    },
+    {
+      "name": "pref20000",
+      "role": "member",
+      "kind": "delivery-module",
+      "count": 1,
+      "startAfter": 0,
+      "jitter": 8,
+      "config": "member-mix-static.json.tpl",
+      "env": {
+        "LOOKUP_INTERVAL": "15",
+        "ANONYMITY_LEVEL": "Preferred",
+        "SEND_AFTER": "90",
+        "SEND_COUNT": "6",
+        "SEND_INTERVAL": "5",
+        "SEND_SIZE": "20000"
+      }
+    }
+  ]
+}
