@@ -347,7 +347,11 @@ import manifest, sys
     log "suite: $name -- running"
     if HARNESS_MANIFEST=$m "$0" run "" "$dir" > "$root/$name.log" 2>&1; then
       verdict=$(sed -n 's/^verdict: //p' "$dir/delivery.txt" 2>/dev/null | tail -1) || true
-      verdict=${verdict:-no traffic to judge}
+      if [ -z "$verdict" ]; then
+        # A manifest with a sender must come back with a verdict.
+        if grep -q '"SEND_COUNT"' "$m"; then verdict="NO REPORT: senders but no verdict in delivery.txt"
+        else verdict="no traffic to judge"; fi
+      fi
     else
       verdict="RUN FAILED: $(tail -1 "$root/$name.log" | cut -c1-120)"
     fi
