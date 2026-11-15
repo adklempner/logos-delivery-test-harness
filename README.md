@@ -1,9 +1,9 @@
 # logos-delivery-test-harness
 
-A container fleet for exercising logos-delivery: one or more bootstrap nodes and
-any number of members, each either a native `logosdeliverynode` or a
-delivery-module node (logoscore + delivery_module + libp2p_module), joining and
-leaving on a schedule, with Prometheus and provisioned Grafana dashboards.
+A container fleet for exercising logos-delivery on one machine. A JSON manifest
+describes the nodes; the harness builds them from pinned sources, runs them on a
+private docker network on a schedule, sends traffic through them, and collects
+what happened.
 
 Driving it from an agent (Claude Code, Codex, ...)? [AGENTS.md](AGENTS.md) is the
 operating manual, and [Prompt examples](#prompt-examples) below shows requests it
@@ -12,10 +12,43 @@ turns into runs.
 Everything is built by nix from named git revisions, so a manifest plus the
 generated `out/resolved.json` reproduces an image exactly.
 
+## What it does
+
+| Capability | How | Section |
+|---|---|---|
+| Fleets of mixed node kinds | native `logosdeliverynode`, `delivery-module` (logoscore + delivery_module + libp2p_module), `delivery-demo` (the demo UI), `sd-agent` (libp2p_module alone) | [Groups](#groups) |
+| Schedules and churn | groups start and stop at offsets from T0; `start` / `stop` by hand mid-run | [Groups](#groups), [Running](#running) |
+| Any revision of any component | one module pin, the rest from its flake lock; per-component overrides in the manifest or the environment | [Building](#building) |
+| Several builds side by side | a manifest names its image, so a PR build does not replace the default | [Building](#building) |
+| Message traffic with a verdict | sender groups, per-message outcome matched across nodes, latency percentiles, expected outcome per group | [Traffic](#traffic-and-what-is-expected-of-it) |
+| Mix | fixed-key mix nodes (native or module), static or discovery-fed pools, exit and retry data per message | [Mix](#mix) |
+| RLN | a local LEZ chain with an RLN registry, Relay RLN and per-hop Mix RLN | [RLN](#rln-on-a-local-lez-chain) |
+| Service-discovery experiments | `sd-agent` nodes advertising, flapping and looking up services | [sd-agent nodes](#sd-agent-nodes) |
+| Public networks | members joining logos.dev or logos.test | [Joining a public network](#joining-a-public-network) |
+| Suites | manifests run one after another, each for its own duration, with a summary of verdicts | [Running](#running) |
+| Metrics | Prometheus and provisioned Grafana dashboards; CPU and memory per container | [Results](#results) |
+
+master holds what the harness can do. Campaigns run with it (their manifests,
+run cases and reports) live on branches of their own, each adding one directory
+under `experiments/`:
+
+| Branch | Campaign |
+|---|---|
+| `experiment/sd-corner-cases` | service-discovery stress and corner cases |
+| `experiment/mix-over-delivery` | mix scenarios, long-run mix networks, Mix RLN |
+
 ## Requirements
 
 Docker, bash, python3. **Nix is not needed on the host** — it runs inside the
 builder container, whose store persists in the `logos-harness-nix` volume.
+
+An RLN build also uses the host's docker socket from a build container (the LEZ
+guest programs are built by `cargo risczero` in docker).
+
+Sizing, measured on a 10-core, 12.6 GB docker VM: 46 nodes without RLN used
+about 2 cores and 4.2 GiB; 22 RLN nodes with Mix RLN at 0.8 messages per second
+used about 4.3 cores; 45 RLN nodes at 1.6 messages per second saturated the
+machine and gave no valid result.
 
 ## Quickstart
 
@@ -31,11 +64,145 @@ open http://localhost:3000    # Grafana (anonymous admin)
 `HARNESS_MANIFEST=examples/37-node-late-joiners.json ./harness.sh run 1500` runs
 the 37-node late-joiner topology instead of the small default.
 
+A manifest from the [examples](#examples) carries its own
+build and duration:
+
+```bash
+export HARNESS_MANIFEST=examples/mix-static-smoke.json
+./harness.sh build          # builds the image this manifest names
+./harness.sh run            # for the manifest's "duration"; verdict in <dir>/delivery.txt
+```
+
+## Building
+
+`./harness.sh build` does everything the manifest in `HARNESS_MANIFEST` needs,
+and each step is skipped or cached when its result exists.
+
+| Step | When | Result |
+|---|---|---|
+| Resolve the module's flake lock | always | `out/resolved.json`: one flake reference per component |
+| `nix build` each component in the builder container | always (cached in the `logos-harness-nix` volume) | `out/logoscore`, `out/modules`, `out/seed-store` |
+| RLN modules (`liblogos_rln_module`, `liblogos_lez_rln_module`) | manifest has an `"rln"` section | copied into `out/modules` |
+| LEZ sequencer, from source | `"rln"` section, image missing | `logos-sim-lez-sequencer:local` |
+| logos-lez-rln tools and guest programs | `"rln"` section, `out/lez-tools` missing | `out/lez-tools`, `logos-sim-lez:local` |
+| logos-delivery-demo | manifest has a `delivery-demo` group | rooted in the nix volume, `logos-sim-demo:local` |
+| Runtime image | unless `--no-image` | the manifest's `image` (default `logos-sim:local`) |
+
+### Build variants
+
+What is built is decided by three things in the manifest: `module` (the one
+pin), `overrides` (components moved away from the module's lock) and `image`
+(the tag the result gets).
+
+| Variant | In the manifest | Or from the environment |
+|---|---|---|
+| The module's own set | nothing | — |
+| Another logos-delivery-module | `"module": {"ref": "<branch\|tag>"}` or `"rev"` | `DELIVERY_MODULE_REF` / `_REV` / `_FLAKE` |
+| Another logos-delivery (a PR, a branch) | `"overrides": {"logos-delivery": {"rev": "<full sha>"}}` | `DELIVERY_REF` / `_REV` / `_FLAKE` |
+| Another libp2p_module, openmetrics-module, logoscore CLI, demo | `"overrides": {"<component>": {...}}` | `LIBP2P_MODULE_*`, `OPENMETRICS_MODULE_*`, `LOGOSCORE_CLI_*`, `DELIVERY_DEMO_*` |
+| With RLN | `"rln": {}` | — |
+| Its own image | `"image": "logos-sim:pr4647"` | `IMAGE` |
+
+Give every variant its own `image`. The nodes of a manifest run the image it
+names, so a manifest pinned to a PR and one on the default set can be built
+once each and then run in any order:
+
+```json
+{
+  "image": "logos-sim:pr4647",
+  "overrides": { "logos-delivery": { "rev": "69f3ff21866aaf302caa2a5f080ed08ef715e2d2" } }
+}
+```
+
+`up`, `run` and `suite` refuse to start when the manifest's image is not built,
+and name the build command. The environment wins over the manifest, for the
+image and for every revision. An image built with the RLN modules also runs
+manifests without RLN; the reverse does not work.
+
+`docker/` and `conf/` are baked into the image: after changing them, build
+again (minutes, when the nix results are cached).
+
+Build times: 5–20 minutes with a warm nix volume, much longer cold. The first
+RLN build adds over an hour (the sequencer and the LEZ tools compile from
+source). The public nix cache (`cache.nix.logos.co`) is used when it answers;
+when it does not, nix falls back to building from source after 5 s per lookup.
+
+The LEZ sequencer and tools are built for the host's platform. On Apple silicon
+the upstream amd64 sequencer does not run under emulation, which is why the
+default is a local build; name another image in `rln.sequencerImage` to use a
+prebuilt one.
+
+## Running
+
+```bash
+HARNESS_MANIFEST=<manifest> ./harness.sh run [seconds] [collect-dir]
+```
+
+`run` brings the stack up, lets it run until T0 + `seconds`, collects into the
+directory (default `out/collect/<utc-stamp>`) and tears it down. `seconds` may
+be left out when the manifest has a `"duration"`. It blocks for the whole run.
+
+To keep the stack up and look around: `up`, then Grafana at
+`http://localhost:3000`, `./promq.sh '<promql>'`, `./harness.sh collect`, and
+`./harness.sh down -v` at the end. `start <group|node>` and `stop` change the
+running fleet by hand.
+
+One stack runs per host. To run several manifests, use a suite:
+
+```bash
+./harness.sh suite --build examples/msg-smoke.json examples/mix-static-smoke.json \
+                           examples/rln-smoke.json
+```
+
+Each manifest runs for its `duration` and is collected into
+`out/collect/suite-<utc-stamp>/<name>/`; `--build` first builds the images that
+are missing. The summary (`summary.txt`) has one line per manifest: `PASS` or
+`FAIL` from its delivery report, `no traffic to judge` for a manifest without a
+sender, or `RUN FAILED`. The exit status is 0 only when nothing failed.
+
+## Examples
+
+One manifest per capability; copy the closest one. "Build" is what the manifest
+pins: the mix and RLN examples name logos-delivery master `39b5f4ee`, because
+the module's flake lock still points at an older logos-delivery.
+
+| Manifest | Nodes | Build (image) | Duration | Shows |
+|---|---|---|---|---|
+| [`msg-smoke`](examples/msg-smoke.json) | 5 | module's lock (`logos-sim:local`) | 150 s | plain sends: propagated, stored, received |
+| [`sd-smoke`](examples/sd-smoke.json) | 5 | module's lock | 300 s | `sd-agent` nodes: 2 advertisers, 1 looker, a delivery bystander; read with `lib/sd_report.py` |
+| [`mix-static-smoke`](examples/mix-static-smoke.json) | 8 | master `39b5f4ee` | 240 s | `Required` sends through 4 fixed-key mix nodes |
+| [`rln-smoke`](examples/rln-smoke.json) | 5 | master `39b5f4ee` + RLN | 420 s | Relay RLN: a member's sends arrive, a non-member's all fail (`expect: error`) |
+| [`mix-rln-smoke`](examples/mix-rln-smoke.json) | 8 | master `39b5f4ee` + RLN | 480 s | mix over the RLN network, 4 module mix nodes; verdict FAIL on this build (see [Mix](#mix)) |
+| [`37-node-late-joiners`](examples/37-node-late-joiners.json), [`37-node-late-2-12min`](examples/37-node-late-2-12min.json), [`2-bootstraps-15-members-late-2-12min`](examples/2-bootstraps-15-members-late-2-12min.json), [`mixed-2-bootstraps-30-members`](examples/mixed-2-bootstraps-30-members.json) | 17–37 | module's lock | 25–30 min | discovery with late joiners, two bootstraps, mixed kinds; no traffic, read `report.txt` |
+| [`demo-2-instances`](examples/demo-2-instances.json), [`demo-manual`](examples/demo-manual.json) | 5–6 | module's lock | 10 min / by hand | demo UIs as members |
+
+`lib/gen_mixnet.py` writes a mix network of any size (`--mix`, `--senders`,
+`--receivers`, `--mix-kind native|module`, `--rln`, `--stop N --stop-at S`,
+`--delivery-rev`, `--image`, `--duration`).
+
+A logos-delivery that restricts mix to public addresses needs
+`--mix-allow-all-addresses=true` on native mix nodes and `MIX_ALLOW_ALL=1` on
+module ones; a build without that option rejects it.
+
 ## The manifest
 
 `harness.json` pins exactly **one** thing — the logos-delivery-module ref — and
 declares the node groups. Every other component is derived from that module's own
-flake lock, so the harness always builds a coherent set:
+flake lock, so the harness always builds a coherent set.
+
+| Top-level key | Default | Meaning |
+|---|---|---|
+| `module` | required (`flake`; `ref` defaults to `master`) | the logos-delivery-module to build: `ref` (branch or tag) or `rev` |
+| `overrides` | none | components taken from somewhere other than the module's lock ([Overrides](#overrides)) |
+| `image` | `logos-sim:local` | the runtime image `build` tags and the nodes run ([Build variants](#build-variants)) |
+| `duration` | none | seconds `run` and `suite` let the stack run, from T0 |
+| `rln` | absent | a local LEZ chain with an RLN registry ([RLN](#rln-on-a-local-lez-chain)) |
+| `network` | see [Network](#network) | subnet, cluster, shard count |
+| `groups` | required | the nodes ([Groups](#groups)) |
+
+Keys starting with `_` (`_comment`) are ignored.
+
+Where each component's revision comes from:
 
 | Component | Where its revision comes from |
 |---|---|
@@ -121,7 +288,19 @@ reference:
 ```
 
 An override carrying a full `flake` stands alone and needs no lock entry; one
-carrying only `rev` swaps the revision of a component the module does pin.
+carrying only `rev` (or `ref`) swaps the revision of a component the module does
+pin. That is how a manifest runs a logos-delivery PR — its head commit, with an
+image of its own:
+
+```json
+"image": "logos-sim:pr4647",
+"overrides": {
+  "logos-delivery": { "rev": "69f3ff21866aaf302caa2a5f080ed08ef715e2d2" }
+}
+```
+
+As with `DELIVERY_*`, this moves both the native nodes and the delivery_module
+the module nodes run.
 `harness.sh resolve` reports each component's source as `module-lock`,
 `override` or `manifest`, so what is derived and what is imposed is visible
 before anything is built.
@@ -158,14 +337,15 @@ one offset and optionally stopped at another*:
 
 - `role` — `bootstrap` (a fixed, known node the others join the DHT through) or
   `member`.
-- `kind` — what runs. A bootstrap is `logosdeliverynode` or `delivery-module`;
-  a member can be any of the three:
+- `kind` — what runs. A bootstrap is `logosdeliverynode`, `delivery-module` or
+  `sd-agent`; a member can be any of the four:
 
   | `kind` | Runs | Default for |
   |---|---|---|
   | `logosdeliverynode` | the delivery node binary, kademlia in-process; configured by the group's `args` | `bootstrap` |
   | `delivery-module` | a logoscore daemon hosting delivery_module, discovery hosted on libp2p_module; configured by the group's `config` profile | `member` |
   | `delivery-demo` | the [logos-delivery-demo](https://github.com/logos-co/logos-delivery-demo) UI with its own delivery node, which you watch in a browser; configured by the same `config` profile ([below](#demo-nodes)) | — (members only) |
+| `sd-agent` | a logoscore daemon hosting libp2p_module alone, driven through its service-discovery API by the group's `SD_*` env ([below](#sd-agent-nodes)) | — |
 
 - `count` — n nodes. Bootstrap groups hold exactly one (below).
 - `config` (delivery-module, delivery-demo) — the profile in `conf/`, rendered
@@ -213,32 +393,17 @@ one offset and optionally stopped at another*:
   `@BOOTSTRAPS@`; the public-network profiles have none.
 - `jitter` — random 0..n second spread within a delivery-module group. N daemons
   loading plugins at the same instant trip logos-core's 10 s plugin-load timeout.
-- `env` — extra environment for the group's delivery-module and delivery-demo
-  containers (a logosdeliverynode takes none). The rest
+- `env` — extra environment for the group's delivery-module, delivery-demo and
+  sd-agent containers (a logosdeliverynode takes none). The rest
   is derived (`BOOTSTRAP_ADDR`, `CLUSTER_ID`, `NUM_SHARDS`, ports), but these are
   only reachable here: `LOOKUP_INTERVAL` (seconds, into the rendered profile),
   `MESH_CONTENT_TOPIC` (what the node subscribes to, default
   `/sim/1/mesh/proto`), `P2P_MAX_CONNS` (the plugin host's connection limits,
-  default 100), `LD_DISCO_TRACE` (where the plugin writes its trace).
-  `SEND_COUNT` makes a delivery-module group's nodes senders: `SEND_AFTER`
-  seconds after subscribing (default 60) each sends that many messages on the
-  mesh content topic, one every `SEND_INTERVAL` seconds (default 5), padded to
-  `SEND_SIZE` bytes when set. `ANONYMITY_LEVEL` (`None`, `Preferred`,
-  `Required`) sets the level in the mix profiles. `collect`
-  then writes `delivery.txt` (`lib/msg_report.py`): per message, whether it was
-  propagated, confirmed and received by every other delivery-module node.
-  `MIXNODES` (the static mix pool behind a profile's `@MIXNODES@`) is derived:
-  every native bootstrap group started with a fixed `--mixkey=` is a mix node
-  whose address, identity and mix public key are known ahead, and the
-  delivery-module nodes are handed all of them (`examples/mix-static-smoke.json`,
-  profile `member-mix-static.json.tpl`). With `member-mix.json.tpl` the pool
-  comes from discovery only.
-  A delivery-module node that mounts mix can be picked as the exit of another
-  sender's message, and then gets no `messageReceived` for it: `delivery.txt`
-  counts that as a miss, so judge delivery by the plain members.
-  A plain send is confirmed against a store node, so the fleet needs one
-  (`examples/msg-smoke.json` runs it on the bootstrap) or every send ends in
-  `messageError` although it was delivered.
+  default 100), `LD_DISCO_TRACE` (where the plugin writes its trace),
+  `START_TIMEOUT` (seconds to wait for the node's `nodeStarted` event, default
+  60). The traffic, mix and RLN variables are in the sections below.
+- `expect` (sender groups) — what the group's sends should come to:
+  `delivered` (default), `error` or `any` ([below](#traffic-and-what-is-expected-of-it)).
 
 A **bootstrap** group holds exactly one node, at a fixed address with a fixed
 identity, so the others know where to join before it starts:
@@ -266,6 +431,72 @@ identity, so the others know where to join before it starts:
 logosdeliverynode nodes write no discovery trace and no stage log, so `report`
 and the `module lost` watchdog cover delivery-module nodes only; `collect` keeps
 every logosdeliverynode's log instead, and Prometheus scrapes both kinds.
+
+### Traffic and what is expected of it
+
+`SEND_COUNT` in a `delivery-module` group's `env` makes its nodes senders.
+
+| `env` | Default | Meaning |
+|---|---|---|
+| `SEND_COUNT` | `0` (not a sender) | messages each node sends on the mesh content topic |
+| `SEND_AFTER` | `60` | seconds after the node subscribed before the first send |
+| `SEND_INTERVAL` | `5` | seconds between sends |
+| `SEND_SIZE` | payload `<node>-<n>` | pad the payload to this many bytes |
+| `ANONYMITY_LEVEL` | `Preferred` in the mix profiles | `None`, `Preferred` or `Required` |
+
+Every delivery-module node records its delivery_module events with a local
+nanosecond stamp, and `collect` writes `delivery.txt` (`lib/msg_report.py`):
+per message, whether the send was accepted, propagated, confirmed, and received
+by every other delivery-module node; latency from send to propagated and from
+send to received; and, from 50 sends up, percentiles, 5-minute steps, mix
+routes and resource use.
+
+The report ends in `verdict: PASS` or `FAIL`, judged against the group's
+`expect`:
+
+| `expect` | A message is as expected when |
+|---|---|
+| `delivered` (default) | the send was accepted, did not end in `messageError`, and every other delivery-module node received it |
+| `error` | the send was refused or ended in `messageError`, and no node received it |
+| `any` | always (the group is not judged) |
+
+A send still without an outcome when the run ended (made in its last 60 s) is
+counted as in flight and not judged.
+
+A plain send is confirmed against a store node, so the fleet needs one
+(`examples/msg-smoke.json` runs it on the bootstrap) or every send ends in
+`messageError` although it was delivered.
+
+### Mix
+
+A mix node is a bootstrap-role group with a fixed mix key, so that its address,
+identity and mix public key are known before it starts:
+
+- native: `"kind": "logosdeliverynode"` with `--mix=true --mixkey=<64 hex>`
+  (and `--lightpush=true`, since a mix exit publishes through lightpush);
+- module: `"kind": "delivery-module"`, `"config": "mixnode.json.tpl"`, and
+  `NODEKEY` / `MIXKEY` in `env`.
+
+Every delivery-module node is handed all of them as `MIXNODES`, the static pool
+behind a profile's `@MIXNODES@` (`member-mix-static.json.tpl`), so a sender can
+build a path without waiting for discovery. `member-mix.json.tpl` has no static
+pool and learns mix nodes from discovery alone. `MIX_ALLOW_ALL=1` sets
+`mix-allow-all-addresses` in the mix profiles, for a logos-delivery that
+restricts mix to public addresses.
+
+For mix runs `collect` adds `mixlog.txt` (per message: the node that was its
+exit, and each try of the sender), `q_mixload.json` (packets received,
+forwarded and failed per node) and `q_mixpool.json` (the usable pool per node
+since T0); `delivery.txt` summarises them as exit distribution, tries per
+message and per-node load.
+
+Two things to know when reading a mix result:
+
+- A delivery-module node that mounts mix can be picked as the exit of another
+  sender's message. On logos-delivery master `39b5f4ee` it then gets no
+  `messageReceived` for that message, and `delivery.txt` counts the miss.
+- A sender with a mix profile mounts mix too, so it serves as hop and exit for
+  the other senders.
 
 ### RLN on a local LEZ chain
 
@@ -299,16 +530,21 @@ about a minute after T0 for the first nodes, so give `SEND_AFTER` no less than 3
 `harness.sh build` with such a manifest also builds the two RLN modules, the
 sequencer (from the logos-execution-zone source, tag `LEZ_REF`) and
 logos-lez-rln's tools. The first build takes over an hour; the results are kept
-(`out/lez-tools`, the images, the `logos-harness-lez-build` volume).
+(`out/lez-tools`, the images, the `logos-harness-lez-build` volume). Give an RLN
+manifest an `image` of its own: only an image built from such a manifest holds
+the RLN modules.
 
 A mix node as a `delivery-module` node is a bootstrap-role group with
 `"config": "mixnode.json.tpl"` and `NODEKEY` / `MIXKEY` in its `env`; like the
 native ones with `--mixkey`, it is handed to the other module nodes as `MIXNODES`.
 
 - `examples/rln-smoke.json`: a sender with a membership (all received) and one
-  without (every send a `messageError`), so its verdict is FAIL by design.
+  without, whose group says `"expect": "error"` (every send a `messageError`).
 - `examples/mix-rln-smoke.json`: mix over the RLN network, 4 module mix nodes.
-  Each message is missing at one mix node, its exit (see the exit-node caveat).
+  On master `39b5f4ee` each message is missing at one mix node, its exit (see [Mix](#mix)).
+
+In `delivery.txt`, "receptions of other messages" are Mix RLN coordination
+frames, which every node relays.
 
 ### Joining a public network
 
@@ -340,6 +576,33 @@ and `--cluster-id=2` even replaces any preset with logos.dev. The other harness
 flags still apply, `--shard=0` included. The containers reach the network
 through docker's NAT and advertise their private address (`--nat=extip:`), so
 they dial out but cannot be dialled from it.
+
+### sd-agent nodes
+
+An `sd-agent` group runs libp2p_module alone — kad-dht and service discovery,
+no delivery node — and drives it through the module's public API
+(`docker/sd_agent.py`). It can be a bootstrap or a member, and it joins like a
+module node. `{i}` in a value is the node's 1-based index in its group.
+
+| `env` | Meaning |
+|---|---|
+| `SD_ADVERTISE` | comma list of service ids, advertised once at start |
+| `SD_FLAP` | `<svc>:<on_s>:<off_s>`: advertise, stop, repeat |
+| `SD_LOOKUP` | comma list looked up every cycle |
+| `SD_LOOKUP_ROTATE` | comma list looked up in rotation; `prefix[a-b]` expands |
+| `SD_LOOKUP_PER_CYCLE`, `SD_LOOKUP_INTERVAL`, `SD_LOOKUP_START` | rotating ids per cycle (4), seconds per cycle (20), seconds before the first (0) |
+| `SD_LOOKUP_PARALLEL` | `1` (default): a cycle's lookups run concurrently; `0`: one by one |
+| `P2P_MAX_CONNS` | libp2p connection limit (100) |
+
+Each agent writes one JSON line per advertise, stop and lookup to
+`<node>.sd.jsonl`, which `collect` keeps. Read a run with
+
+```bash
+python3 lib/sd_report.py <collect-dir> [window-seconds]
+```
+
+`examples/sd-smoke.json` is a 5-minute check of the driver. The branch
+`experiment/sd-corner-cases` holds a campaign built on this kind.
 
 ### Demo nodes
 
@@ -417,8 +680,9 @@ registration.
 | `harness.sh build [--no-image]` | resolve, nix-build every component, build the image |
 | `harness.sh gen` | write `out/compose.groups.yml`, `out/prom-targets.json`, `out/plan.json` |
 | `harness.sh up` | gen, start monitoring, launch each group at its `startAfter` and stop it at its `stopAfter`, log to `out/run.log`; returns when the schedule is done and leaves the stack up |
-| `harness.sh run <sec> [dir]` | `up`, wait until T0 + `sec`, `collect` into `dir` (default `out/collect/<utc-stamp>`), `down -v`. Launches or stops scheduled at or after the end are dropped, with a warning |
-| `harness.sh collect [dir]` | snapshot a running stack: stage log, container states, traces, plan and pins, `up`, peers-per-shard and relay-connection metrics, report, and the logs of every bootstrap and logosdeliverynode and of any delivery-module member with an error, a failed stage or a stopped container (`COLLECT_LOGS=all` keeps every log) |
+| `harness.sh run [sec] [dir]` | `up`, wait until T0 + `sec` (default: the manifest's `duration`), `collect` into `dir` (default `out/collect/<utc-stamp>`), `down -v`. Launches or stops scheduled at or after the end are dropped, with a warning. Samples every container's CPU and memory every 30 s |
+| `harness.sh suite [--build] <manifest>…` | `run` each manifest for its `duration`, one after another, into `out/collect/suite-<utc-stamp>/<name>`; print and keep one verdict line each (`summary.txt`). `--build` first builds the images that are missing |
+| `harness.sh collect [dir]` | snapshot a running stack: stage log, container states, traces, events, plan and pins, metrics, mix routes, reports, and the logs of every bootstrap and logosdeliverynode and of any delivery-module member with an error, a failed stage or a stopped container (`COLLECT_LOGS=all` keeps every log). See [Results](#results) |
 | `harness.sh start <group\|node>…` | start groups or nodes in the running stack — a `manual` group, or any other mid-run. Refuses when the bootstrap they join through is not running; logs to `run.log` and prints a demo's noVNC URL |
 | `harness.sh stop <group\|node>…` | stop them again (graceful, as for `stopAfter`); `start` brings them back |
 | `harness.sh down [-v]` | tear down |
@@ -448,7 +712,9 @@ How the harness itself runs:
 | `HARNESS_MANIFEST` | `./harness.json` | which manifest is read — how the examples are run |
 | `BUILDER_IMAGE` | `nixos/nix:2.24.9` | the container every nix command runs in |
 | `NIX_VOLUME` | `logos-harness-nix` | the docker volume holding the builder's nix store |
-| `IMAGE` | `logos-sim:local` | the runtime image `build` produces and compose runs |
+| `IMAGE` | the manifest's `image` | the runtime image `build` produces and the nodes run |
+| `LEZ_REF` | `v0.3.2` | the logos-execution-zone tag the RLN sequencer is built from |
+| `COLLECT_LOGS` | `flagged` | `all` keeps every container's log at `collect` |
 | `PYTHON` | `python3` | the interpreter for `lib/` |
 | `SUBNET` | `10.0.0.0/8` | the compose network, read by `docker-compose.yml` |
 | `PROMETHEUS_PORT` | `9090` | published Prometheus port |
@@ -457,6 +723,25 @@ How the harness itself runs:
 `NIX_VOLUME` is worth knowing about: it is where every build is cached, so two
 checkouts sharing it rebuild almost nothing, and `docker volume rm` on it is
 how you force a cold build.
+
+## Results
+
+What `collect` (and so `run`) leaves in the directory:
+
+| File | Holds |
+|---|---|
+| `run.log`, `plan.json`, `resolved.json`, `t0` | T0 and every launch and stop with its offset; the groups and their nodes; the exact revision of every component |
+| `ps.txt`, `stages.txt` | container states; each module node's start-up stages |
+| `report.txt`, `*.trace` | the discovery report and the traces it is made from |
+| `delivery.txt`, `*.send.jsonl`, `*.msg.jsonl` | the delivery report with its verdict; every send call and every delivery_module event per node |
+| `mixlog.txt`, `q_mixload.json`, `q_mixpool.json` | mix exits and tries per message; per-node mix counters; the usable pool since T0 |
+| `stats.tsv` | CPU and memory per container every 30 s (`run` only) |
+| `q_up.json`, `q_peers.json`, `q_relay.json` | Prometheus at collection |
+| `*.sd.jsonl` | sd-agent events |
+| `*.log`, `mN.png` | kept container logs; a screenshot of each demo |
+| `warnings.txt` | present only when something could not be collected, e.g. a node whose log did not come back for the route data |
+
+[AGENTS.md](AGENTS.md) describes how to read each of them.
 
 ## Layout
 
@@ -469,7 +754,7 @@ lib/                 manifest parsing, lock resolution, generators
 docker/              member and demo images: Dockerfiles, entrypoints, profile renderer, QML inspector client
 conf/                node profiles
 monitoring/          Prometheus config, Grafana provisioning + dashboards
-examples/            ready-made topologies
+examples/            one ready-made manifest per capability
 out/                 gitignored: build artefacts, generated compose, traces, run log
 ```
 
@@ -558,6 +843,14 @@ with `"count": 2` on the manual demo group into `out/manifests/`, builds, runs
 ```bash
 ./harness.sh start demo      # both demos; noVNC on http://localhost:6080 and :6081
 ./harness.sh stop m5         # or one node at a time, by name
+```
+
+**"Run the smokes and tell me which pass."** — a suite; each manifest names its
+own build:
+
+```bash
+./harness.sh suite --build examples/msg-smoke.json examples/sd-smoke.json \
+  examples/mix-static-smoke.json examples/rln-smoke.json
 ```
 
 **"Did anyone lose libp2p?"** — after a run, `grep 'module lost' <dir>/stages.txt`;

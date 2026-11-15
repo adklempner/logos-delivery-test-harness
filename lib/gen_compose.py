@@ -52,7 +52,7 @@ def _depends(on):
 """
 
 
-def _native_service(g, name, ip, port, net_conf, join, depends_on):
+def _native_service(g, name, ip, port, net_conf, join, depends_on, image):
     """logosdeliverynode, as a bootstrap or a member. `join` is the bootstrap
     address it joins the DHT through, empty for the first bootstrap."""
     args = ["logosdeliverynode"]
@@ -74,7 +74,7 @@ def _native_service(g, name, ip, port, net_conf, join, depends_on):
         args.append(f"--kad-bootstrap-node={addr}")
     cmd = "\n".join(f"      - {a}" for a in args)
     return f"""  {name}:
-    image: logos-sim:local
+    image: {image}
     hostname: {name}
     labels:
       harness.group: "{g['name']}"
@@ -99,7 +99,7 @@ def _native_service(g, name, ip, port, net_conf, join, depends_on):
 """
 
 
-def _module_service(g, name, ip, net_conf, join, depends_on, rln=None):
+def _module_service(g, name, ip, net_conf, join, depends_on, image, rln=None):
     """A logoscore daemon hosting delivery_module, as a bootstrap or a member.
     A bootstrap carries a fixed libp2p key, so its DHT address is known ahead."""
     env = {
@@ -135,7 +135,7 @@ def _module_service(g, name, ip, net_conf, join, depends_on, rln=None):
       start_period: 5s
 """
     return f"""  {name}:
-    image: logos-sim:local
+    image: {image}
     hostname: {name}
     labels:
       harness.group: "{g['name']}"
@@ -188,7 +188,7 @@ def _lez_services(rln):
     ]
 
 
-def _agent_service(g, name, ip, join, depends_on, index):
+def _agent_service(g, name, ip, join, depends_on, index, image):
     """An sd-agent: a logoscore daemon hosting only libp2p_module, driven by
     docker/sd_agent.py through the module's service-discovery API. `index` is
     the node's 1-based position in its group ({i} in the SD_* env)."""
@@ -214,7 +214,7 @@ def _agent_service(g, name, ip, join, depends_on, index):
       start_period: 5s
 """
     return f"""  {name}:
-    image: logos-sim:local
+    image: {image}
     hostname: {name}
     labels:
       harness.group: "{g['name']}"
@@ -312,6 +312,7 @@ def generate(m, compose_path, targets_path, plan_path):
                 g["env"].setdefault("MIXNODES", mixnodes)
 
     rln = m.get("rln")
+    image = manifest.image(m)
     services, targets, plan = (_lez_services(rln) if rln else []), [], []
     member_no = 0
     joins = {}  # member service -> the bootstrap service it joins through
@@ -324,11 +325,11 @@ def generate(m, compose_path, targets_path, plan_path):
             name, ip = g["name"], g["ip"]
             join, dep = ("", "") if g is first else (dht_entry, first["name"])
             if g["kind"] == NATIVE:
-                services.append(_native_service(g, name, ip, g["port"], net_conf, join, dep))
+                services.append(_native_service(g, name, ip, g["port"], net_conf, join, dep, image))
             elif g["kind"] == AGENT_NODE:
-                services.append(_agent_service(g, name, ip, join, dep, 1))
+                services.append(_agent_service(g, name, ip, join, dep, 1, image))
             else:
-                services.append(_module_service(g, name, ip, net_conf, join, dep, rln))
+                services.append(_module_service(g, name, ip, net_conf, join, dep, image, rln))
             targets.append(_target(g, name, ip))
             names.append(name)
         else:
@@ -351,7 +352,7 @@ def generate(m, compose_path, targets_path, plan_path):
                     joins[name] = dep
                 if g["kind"] == NATIVE:
                     services.append(
-                        _native_service(g, name, ip, MODULE_TCP_PORT, net_conf, join, dep)
+                        _native_service(g, name, ip, MODULE_TCP_PORT, net_conf, join, dep, image)
                     )
                 elif g["kind"] == DEMO_NODE:
                     # No Prometheus target: no CLI into the demo's core to start
@@ -364,9 +365,9 @@ def generate(m, compose_path, targets_path, plan_path):
                     names.append(name)
                     continue
                 elif g["kind"] == AGENT_NODE:
-                    services.append(_agent_service(g, name, ip, join, dep, index))
+                    services.append(_agent_service(g, name, ip, join, dep, index, image))
                 else:
-                    services.append(_module_service(g, name, ip, net_conf, join, dep, rln))
+                    services.append(_module_service(g, name, ip, net_conf, join, dep, image, rln))
                 targets.append(_target(g, name, ip))
                 names.append(name)
         step = {
@@ -378,6 +379,8 @@ def generate(m, compose_path, targets_path, plan_path):
         }
         if "stopAfter" in g:
             step["stopAfter"] = g["stopAfter"]
+        if g["expect"] != "delivered":
+            step["expect"] = g["expect"]
         if g["kind"] == DEMO_NODE:
             step["vnc"] = {n: vnc[n] for n in names}
         if g["manual"]:

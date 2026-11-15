@@ -5,6 +5,7 @@ declares the node groups. Everything else is derived (see resolve.py).
 """
 import json
 import os
+import re
 import sys
 
 # Component -> the flake output to build. Keys are node names in the module's
@@ -57,6 +58,11 @@ _G = (
     0x483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8,
 )
 _B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+
+DEFAULT_IMAGE = "logos-sim:local"
+# What a sending group's messages should come to (lib/msg_report.py):
+# delivered to every receiver, a messageError for every one, or not judged.
+EXPECT = ("delivered", "error", "any")
 
 ROLES = ("bootstrap", "member")
 NATIVE = "logosdeliverynode"  # the delivery node binary, in-process kademlia
@@ -201,6 +207,14 @@ def load(path):
     if not (mod.get("ref") or mod.get("rev")):
         mod["ref"] = "master"
 
+    # The image `build` tags and the nodes run: one per build variant, so a
+    # manifest that pins another logos-delivery does not replace the default.
+    if not isinstance(m.setdefault("image", DEFAULT_IMAGE), str) or not m["image"]:
+        _fail("manifest.image must be an image name, e.g. \"logos-sim:pr4647\"")
+    # How long `run` and `suite` let the stack run, in seconds from T0.
+    if "duration" in m and not (isinstance(m["duration"], int) and m["duration"] > 0):
+        _fail("manifest.duration must be a number of seconds")
+
     net = m.setdefault("network", {})
     net.setdefault("subnet", "10.0.0.0/8")
     net.setdefault("clusterId", 42)
@@ -285,6 +299,10 @@ def load(path):
     overrides = {
         k: v for k, v in (m.get("overrides") or {}).items() if not k.startswith("_")
     }
+    # As with <PREFIX>_REF: nix takes a full sha as a rev, not as a ref.
+    for ov in overrides.values():
+        if _is_sha(ov.get("ref") or "") and not ov.get("rev"):
+            ov["rev"] = ov.pop("ref")
     # Every other component takes its pin from the module's lock unless the
     # environment says otherwise, in which case that wins over the manifest too.
     for comp, prefix in ENV_PREFIX.items():
@@ -324,6 +342,8 @@ def _check_group(g, names):
     g.setdefault("startAfter", 0)
     g.setdefault("jitter", 0)
     g.setdefault("env", {})
+    if g.setdefault("expect", "delivered") not in EXPECT:
+        _fail(f"group '{g['name']}': expect must be one of {', '.join(EXPECT)}")
     # stopAfter: seconds from T0 at which the group's containers are stopped.
     # Absent: they run on.
     if "stopAfter" in g and g["stopAfter"] <= g["startAfter"]:
@@ -444,6 +464,16 @@ def uses_rln(m):
 def outputs(m):
     """Component -> flake output, for everything this manifest builds."""
     return {**OUTPUTS, **(RLN_OUTPUTS if uses_rln(m) else {})}
+
+
+def image(m):
+    """The runtime image of this manifest; IMAGE in the environment wins.
+    The name goes into the generated compose file as it is, so it must be a
+    plain image reference."""
+    name = os.environ.get("IMAGE") or m["image"]
+    if not re.fullmatch(r"[A-Za-z0-9._/-]+(:[A-Za-z0-9._-]+)?(@sha256:[0-9a-f]{64})?", name):
+        _fail(f"image {name!r} is not an image reference (name[:tag][@sha256:digest])")
+    return name
 
 
 def uses_demo(m):

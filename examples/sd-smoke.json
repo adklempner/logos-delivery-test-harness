@@ -1,5 +1,6 @@
 {
  "_comment": "5-min driver smoke: 2 advertisers, 1 looker, 1 delivery bystander",
+  "duration": 300,
  "module": {
   "_comment": [
    "Override without editing this file:",

@@ -4,9 +4,13 @@
     "2 validating delivery-module members with an RLN membership, 1 validating member without one that also sends,",
     "and 1 sender with a membership. The \"rln\" section adds the LEZ sequencer and the registry setup.",
     "./harness.sh build with this manifest first (RLN modules, LEZ tools and sequencer), then",
-    "HARNESS_MANIFEST=examples/rln-smoke.json COLLECT_LOGS=all ./harness.sh run 420 out/collect/rln-smoke",
-    "Expect: every message of the member sender received by all; every send of the one without a membership a messageError."
+    "HARNESS_MANIFEST=examples/rln-smoke.json COLLECT_LOGS=all ./harness.sh run out/collect/rln-smoke",
+    "Expect: every message of the member sender received by all; every send of the one without a membership a messageError.",
+    "Pinned to the logos-delivery commit this case was recorded on (overrides.logos-delivery);",
+    "drop that override and the image to run it on what the module's lock names."
   ],
+  "image": "logos-sim:master-39b5f4ee-rln",
+  "duration": 420,
   "module": {
     "_comment": [
       "Override without editing this file:",
@@ -31,6 +35,9 @@
     "logos-logoscore-cli": {
       "flake": "github:logos-co/logos-logoscore-cli",
       "rev": "665ac28bc77f45e3c610f40fef975a12609de531"
+    },
+    "logos-delivery": {
+      "rev": "39b5f4ee9b7712e8d5768414ca12ea3aeb7f1aa8"
     }
   },
   "rln": {
@@ -111,7 +118,8 @@
         "SEND_AFTER": "30",
         "RLN": "1",
         "RLN_MEMBERSHIP": "0"
-      }
+      },
+      "expect": "error"
     }
   ]
 }

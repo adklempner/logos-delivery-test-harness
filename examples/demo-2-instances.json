@@ -3,8 +3,9 @@
     "The default fleet (1 bootstrap, 3 delivery-module members) plus two",
     "logos-delivery-demo UIs you can watch in a browser: one from T0, one joining",
     "at T0+2min and leaving at T0+8min. The noVNC URL of each is printed by gen",
-    "and at the start of the run. Run: HARNESS_MANIFEST=examples/demo-2-instances.json ./harness.sh run 600"
+    "and at the start of the run. Run: HARNESS_MANIFEST=examples/demo-2-instances.json ./harness.sh run"
   ],
+  "duration": 600,
   "module": {
     "_comment": [
       "Override without editing this file:",

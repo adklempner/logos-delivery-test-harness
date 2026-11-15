@@ -3,8 +3,9 @@
     "Mixed fleet: a logosdeliverynode bootstrap and a delivery-module bootstrap;",
     "30 members at T0, 15 of each kind, joining through the two bootstraps",
     "round-robin; one native member joins at T0+2min and one module member at",
-    "T0+12min. Run: HARNESS_MANIFEST=examples/mixed-2-bootstraps-30-members.json ./harness.sh run 1500"
+    "T0+12min. Run: HARNESS_MANIFEST=examples/mixed-2-bootstraps-30-members.json ./harness.sh run"
   ],
+  "duration": 1500,
   "module": {
     "_comment": [
       "Override without editing this file:",

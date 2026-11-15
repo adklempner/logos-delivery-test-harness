@@ -2,9 +2,10 @@
   "_comment": [
     "Message-traffic smoke: 1 bootstrap (also the store node plain sends are confirmed against),",
     "3 plain delivery-module members and 1 sender of 10 messages. anonymityLevel None.",
-    "HARNESS_MANIFEST=examples/msg-smoke.json ./harness.sh run 150 out/collect/msg-smoke",
+    "HARNESS_MANIFEST=examples/msg-smoke.json ./harness.sh run out/collect/msg-smoke",
     "Expect delivery.txt: 10/10 propagated, sent and received, verdict PASS."
   ],
+  "duration": 150,
   "module": {
     "_comment": [
       "Override without editing this file:",

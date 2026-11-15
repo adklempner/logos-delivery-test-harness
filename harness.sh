@@ -7,7 +7,13 @@
 #   harness.sh gen                generate compose services, Prometheus targets, plan
 #   harness.sh up                 gen, then launch each group at its startAfter offset
 #                                 and stop it at its stopAfter; blocks until done
-#   harness.sh run <sec> [dir]    up, run for <sec> from T0, collect into dir, down
+#   harness.sh run [sec] [dir]    up, run for <sec> from T0 (default: the manifest's
+#                                 "duration"), collect into dir, down
+#   harness.sh suite [--build] <manifest>...
+#                                 run each manifest for its "duration", one after
+#                                 another, into out/collect/suite-<utc-stamp>/<name>,
+#                                 and print each one's verdict; --build first builds
+#                                 the images that are missing
 #   harness.sh start <group|node>...  start a group (e.g. a manual one) or node
 #                                 in the running stack; stop does the reverse
 #   harness.sh down [-v]          tear the stack down
@@ -25,7 +31,8 @@
 #   HARNESS_MANIFEST   manifest to use          (default: ./harness.json)
 #   BUILDER_IMAGE      nix builder image        (default: nixos/nix:2.24.9)
 #   NIX_VOLUME         builder's nix store      (default: logos-harness-nix)
-#   IMAGE              runtime image to build   (default: logos-sim:local)
+#   IMAGE              runtime image to build and run, over the manifest's
+#                      "image"                  (default: logos-sim:local)
 #   LEZ_REF            logos-execution-zone tag the RLN sequencer is built from
 #                                               (default: v0.3.2)
 #   PYTHON             interpreter              (default: python3)
@@ -36,13 +43,15 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 MANIFEST=${HARNESS_MANIFEST:-$here/harness.json}
 BUILDER_IMAGE=${BUILDER_IMAGE:-nixos/nix:2.24.9}
 NIX_VOLUME=${NIX_VOLUME:-logos-harness-nix}
-IMAGE=${IMAGE:-logos-sim:local}
 LEZ_REF=${LEZ_REF:-v0.3.2}
 PY=${PYTHON:-python3}
 
 out=$here/out
 mkdir -p "$out/traces"
 export PYTHONPATH="$here/lib"
+
+# The manifest names its image; IMAGE in the environment wins (lib/manifest.py).
+image() { $PY -c "import manifest;print(manifest.image(manifest.load('${1:-$MANIFEST}')))"; }
 
 log() { echo "[$(date -u +%H:%M:%S)] $*"; }
 runlog() { echo "[$(date -u +%H:%M:%S)] $*" | tee -a "$out/run.log"; }
@@ -88,7 +97,8 @@ cmd_build() {
     -v "$NIX_VOLUME:/nix" \
     -v "$out:/out" \
     "$BUILDER_IMAGE" sh -euc 'sh /out/build-inside.sh'
-  local demo
+  local demo image
+  image=$(image)
   demo=$($PY -c "import json;print('logos-delivery-demo' in json.load(open('$out/resolved.json'))['components'])")
   [ "$demo" = True ] && $PY "$here/lib/demo_paths.py" "$out"
 
@@ -98,11 +108,11 @@ cmd_build() {
     log "skipping the image build"
     return
   fi
-  log "docker build $IMAGE"
-  docker build -t "$IMAGE" -f "$here/docker/Dockerfile" "$here"
+  log "docker build $image"
+  docker build -t "$image" -f "$here/docker/Dockerfile" "$here"
   if [ "$demo" = True ]; then
     log "docker build logos-sim-demo:local"
-    docker build -t logos-sim-demo:local --build-arg BASE="$IMAGE" \
+    docker build -t logos-sim-demo:local --build-arg BASE="$image" \
       -f "$here/docker/Dockerfile.demo" "$here"
   fi
 }
@@ -147,6 +157,11 @@ cmd_gen() {
 
 cmd_up() {
   cmd_gen
+  local img
+  for img in $(sed -n 's/^    image: //p' "$out/compose.groups.yml" | grep '^logos-sim' | sort -u); do
+    docker image inspect "$img" >/dev/null 2>&1 ||
+      { echo "harness: image $img is not built -- HARNESS_MANIFEST=$MANIFEST ./harness.sh build" >&2; exit 1; }
+  done
   # Traces are a bind mount and the members append to them, so a leftover file
   # would carry the previous run's lookups into this run's report.
   rm -f "$out"/traces/*.trace "$out"/traces/*.msg.jsonl "$out"/traces/*.send.jsonl "$out"/traces/*.sd.jsonl
@@ -217,8 +232,12 @@ for at,_,what,g in sorted(ev, key=lambda e: e[:2]):
 cmd_run() {
   # up, wait until T0 + <seconds>, collect, down. Launches or stops scheduled
   # after the end of the run are dropped, and said so.
-  local duration=${1:-} dir=${2:-} up t0 late
-  case "$duration" in ''|*[!0-9]*) echo "usage: harness.sh run <seconds> [collect-dir]" >&2; exit 1 ;; esac
+  local duration dir=${2:-} up t0 late
+  duration=${1:-$($PY -c "import manifest;print(manifest.load('$MANIFEST').get('duration', ''))")}
+  case "$duration" in ''|*[!0-9]*)
+    echo "usage: harness.sh run <seconds> [collect-dir]  (seconds may be left out when the manifest has a \"duration\")" >&2
+    exit 1 ;;
+  esac
   rm -f "$out/t0" "$out/abort"
   cmd_gen >/dev/null
   late=$($PY -c "
@@ -305,6 +324,44 @@ PY
 
 cmd_down() { cmd_gen >/dev/null; dc down --remove-orphans "$@"; }
 
+cmd_suite() {
+  # One stack per host, so one manifest after another; each runs for its own
+  # "duration" and is judged by its delivery report.
+  local build=0 m name dir root verdict rc=0
+  [ "${1:-}" = "--build" ] && { build=1; shift; }
+  [ $# -gt 0 ] || { echo "usage: harness.sh suite [--build] <manifest>..." >&2; exit 1; }
+  for m in "$@"; do
+    $PY -c "
+import manifest, sys
+'duration' in manifest.load('$m') or sys.exit('harness: $m has no \"duration\" (seconds), which suite needs')" || exit 1
+  done
+  root=$out/collect/suite-$(date -u +%Y%m%dT%H%M%SZ)
+  mkdir -p "$root"
+  for m in "$@"; do
+    name=$(basename "$m" .json); dir=$root/$name
+    if [ "$build" = 1 ] && ! docker image inspect "$(image "$m")" >/dev/null 2>&1; then
+      log "suite: $name -- building $(image "$m")"
+      HARNESS_MANIFEST=$m "$0" build > "$root/$name.build.log" 2>&1 ||
+        log "suite: $name -- build failed, see $root/$name.build.log"
+    fi
+    log "suite: $name -- running"
+    if HARNESS_MANIFEST=$m "$0" run "" "$dir" > "$root/$name.log" 2>&1; then
+      verdict=$(sed -n 's/^verdict: //p' "$dir/delivery.txt" 2>/dev/null | tail -1) || true
+      if [ -z "$verdict" ]; then
+        # A manifest with a sender must come back with a verdict.
+        if grep -q '"SEND_COUNT"' "$m"; then verdict="NO REPORT: senders but no verdict in delivery.txt"
+        else verdict="no traffic to judge"; fi
+      fi
+    else
+      verdict="RUN FAILED: $(tail -1 "$root/$name.log" | cut -c1-120)"
+    fi
+    case "$verdict" in PASS*|no\ traffic*) ;; *) rc=1 ;; esac
+    printf '%-44s %s\n' "$name" "$verdict" | tee -a "$root/summary.txt"
+  done
+  log "suite: results in $root"
+  return $rc
+}
+
 cmd_report() {
   # Every node the plan launches, bootstraps included, should end up in the DHT.
   local dir=${1:-$out/traces} n
@@ -328,28 +385,51 @@ cmd_collect() {
   # export (a logosdeliverynode has no per-shard gauge).
   "$here/promq.sh" 'sum by (node, role, kind) (logos_delivery_connected_peers{protocol="/vac/waku/relay/2.0.0"})' \
     > "$dir/q_relay.json" 2>&1 || true
-  # Usable mix pool per mix-mounted node, every scrape of the last 30 min: when
-  # discovery had handed a sender enough mix nodes to build a path.
-  "$here/promq.sh" 'mix_pool_size[30m]' > "$dir/q_mixpool.json" 2>&1 || true
+  # Usable mix pool per mix-mounted node, every scrape since T0: when discovery
+  # had handed a sender enough mix nodes to build a path, and when a stopped
+  # mix node left the pool.
+  local window=1800
+  [ -s "$out/t0" ] && window=$(( $(date +%s) - $(cat "$out/t0") + 60 ))
+  "$here/promq.sh" "mix_pool_size[${window}s]" > "$dir/q_mixpool.json" 2>&1 || true
   # What each mix node handled: received, forwarded, failed, reply timeouts.
   "$here/promq.sh" '{__name__=~"mix_messages_recvd_total|mix_messages_forwarded_total|mix_messages_error_total|mix_reply_timeouts_total"}' \
     > "$dir/q_mixload.json" 2>&1 || true
   cp "$out/stats.tsv" "$dir/" 2>/dev/null || true
   # Mix routes, from every node's log: which node was the exit of which message
   # (its lightpush request names the hash), and each try of a sender.
+  # A node whose log comes back empty or with an error is asked again, and
+  # named in warnings.txt if it stays that way: its routes are then missing.
+  local try
+  : > "$dir/mixlog.txt"; : > "$dir/warnings.txt"
   for s in $(dc ps -a --format '{{.Service}}' | grep -v -e '^lez-' -e prometheus -e grafana); do
-    dc logs --no-color "$s" 2>/dev/null | $PY -c "
+    for try in 1 2 3; do
+      if dc logs --no-color "$s" 2>"$dir/.logs.err" | $PY -c "
 import re, sys
 ansi = re.compile(r'\x1b\[[0-9;]*m')
+n = 0
 for line in sys.stdin.buffer:
+    n += 1
     if b'Handling lightpush request' in line:
         m = re.search(r'msg_hash=(0x[0-9a-f]+)', ansi.sub('', line.decode(errors='replace')))
         if m: print('$s exit', m.group(1))
     elif b'Trying message delivery via Mix' in line:
         m = re.search(r'msgHash=(0x[0-9a-f]+) tryCount=(\d+)', line.decode(errors='replace'))
         if m: print('$s try', m.group(1), m.group(2))
-"
-  done > "$dir/mixlog.txt"
+sys.exit(0 if n else 1)
+" > "$dir/.mixlog.part"; then
+        cat "$dir/.mixlog.part" >> "$dir/mixlog.txt"
+        break
+      fi
+      [ "$try" = 3 ] && echo "no log from $s for the route data: $(tr '\n' ' ' < "$dir/.logs.err" | cut -c1-200)" >> "$dir/warnings.txt"
+      sleep 2
+    done
+  done
+  rm -f "$dir/.mixlog.part" "$dir/.logs.err"
+  if [ -s "$dir/warnings.txt" ]; then
+    log "warning: $(cat "$dir/warnings.txt")"
+  else
+    rm -f "$dir/warnings.txt"
+  fi
 
   # A container log is a few MB, so by default keep only those with something to
   # explain: every bootstrap, every logosdeliverynode (no trace to judge them
@@ -396,6 +476,7 @@ case "${1:-}" in
   report)  shift; cmd_report "$@" ;;
   collect) shift; cmd_collect "$@" ;;
   run)     shift; cmd_run "$@" ;;
+  suite)   shift; cmd_suite "$@" ;;
   start)   shift; cmd_manual start "$@" ;;
   stop)    shift; cmd_manual stop "$@" ;;
   *) usage; exit 1 ;;
