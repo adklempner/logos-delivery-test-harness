@@ -1,0 +1,481 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mix over Delivery — state, issue 183 and harness results</title>
+<style>
+:root{
+  --forest:#0E2618; --sage:#4E635E; --parchment:#E2E0C9; --gray:#E5E5E5; --warm:#DDDED8;
+  --coral:#E46962; --orange:#FA7B17; --red:#EA4335; --muted:#808C78; --teal:#0C2B2D; --ink:#222021;
+  --head:'Times New Roman',Times,Georgia,serif; --body:Arial,Helvetica,sans-serif;
+  --code:'Fira Code',Consolas,'Courier New',monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--parchment);color:var(--ink);font:16px/1.55 var(--body)}
+h1,h2,h3{font-family:var(--head);font-weight:400;line-height:1.15;margin:0}
+h1{font-size:clamp(2rem,5vw,3.4rem)}
+h2{font-size:clamp(1.6rem,3.5vw,2.3rem);margin-bottom:.4rem}
+h3{font-size:1.3rem;margin:2rem 0 .6rem}
+p{margin:.6rem 0;max-width:78ch}
+ul{margin:.5rem 0;padding-left:1.2rem;max-width:78ch}
+li{margin:.3rem 0}
+code{font-family:var(--code);font-size:.86em;background:rgba(78,99,94,.14);padding:.05em .3em;border-radius:3px}
+a{color:inherit}
+section{padding:3.5rem 0}
+.wrap{max-width:1180px;margin:0 auto;padding:0 24px}
+.dark{background:var(--forest);color:#fff}
+.sagebg{background:var(--sage);color:#fff}
+.dark code,.sagebg code{background:rgba(255,255,255,.14)}
+.num{font-family:var(--head);color:var(--muted);font-size:1.1rem;letter-spacing:.08em}
+.dark .num,.sagebg .num{color:#b9c2b0}
+.lead{font-size:1.15rem;max-width:70ch}
+.hero{padding:4.5rem 0 3.5rem}
+.hero .lambda{font-family:var(--head);font-size:2.2rem;color:var(--muted)}
+.hero p.meta{color:#b9c2b0;font-size:.92rem}
+nav{display:flex;flex-wrap:wrap;gap:.4rem 1.4rem;margin-top:1.6rem;font-size:.92rem}
+nav a{color:#d7dccf;text-decoration:none;border-bottom:1px solid var(--muted)}
+.tw{overflow-x:auto;margin:1rem 0}
+table{border-collapse:collapse;width:100%;font-size:.9rem;min-width:640px}
+th,td{text-align:left;vertical-align:top;padding:.5rem .65rem;border-bottom:1px solid rgba(78,99,94,.35)}
+th{background:var(--warm);font-weight:700;font-size:.82rem;text-transform:uppercase;letter-spacing:.04em}
+.dark th,.sagebg th{background:rgba(255,255,255,.1);color:#fff}
+.dark td,.sagebg td{border-bottom-color:rgba(255,255,255,.18)}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.tag{display:inline-block;padding:.05rem .45rem;border-radius:3px;font-size:.78rem;font-weight:700;white-space:nowrap}
+.ok{background:#cfd9c4;color:#1d3a22}.part{background:#f1d9a8;color:#5b3c05}.miss{background:#efc2bd;color:#6b1a14}.na{background:var(--gray);color:#444}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1rem;margin:1.5rem 0}
+.kpi{border:1px solid rgba(255,255,255,.22);padding:1rem 1.1rem}
+.kpi b{display:block;font-family:var(--head);font-weight:400;font-size:2rem;line-height:1.1}
+.kpi span{font-size:.85rem;color:#c9d0c1}
+.kpi.bad b{color:var(--coral)}
+.note{border-left:3px solid var(--coral);padding:.2rem 0 .2rem 1rem;margin:1.2rem 0;max-width:78ch}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:2rem}
+figure{margin:1.5rem 0}
+figcaption{font-size:.85rem;color:var(--sage);margin-top:.5rem;max-width:78ch}
+.dark figcaption{color:#b9c2b0}
+svg{max-width:100%;height:auto;display:block}
+svg text{font-family:Arial,Helvetica,sans-serif}
+footer{background:var(--forest);color:#b9c2b0;padding:1.6rem 0;font-size:.85rem}
+footer .l{font-family:var(--head);color:#fff;font-size:1.1rem}
+</style>
+</head>
+<body>
+
+<header class="dark hero">
+<div class="wrap">
+  <div class="lambda">λ Logos</div>
+  <h1>Mix over Delivery</h1>
+  <p class="lead">What logos-delivery does today, what the open reachability PR stack changes, what issue&nbsp;183 asks for, and what four hour-long harness runs on a 46-node network measured.</p>
+  <p class="meta">2026-11-15 · logos-delivery master <code>39b5f4ee9</code> · PR stack tip #4647 <code>69f3ff21</code> · harness branch <code>feat/rln-lez</code> · all runs on one Apple-silicon host (Docker VM: 10 CPUs, 12.6&nbsp;GB)</p>
+  <nav>
+    <a href="#s1">01 Summary</a><a href="#s2">02 Current state</a><a href="#s3">03 Issue 183</a>
+    <a href="#s4">04 Feature matrix</a><a href="#s5">05 Harness</a><a href="#s6">06 The four cases</a><a href="#s7">07 Limits</a>
+  </nav>
+</div>
+</header>
+
+<section id="s1">
+<div class="wrap">
+  <div class="num">01</div><h2>Summary</h2>
+  <ul class="lead">
+    <li><b>Master sends over mix reliably when nothing fails.</b> In an hour of steady traffic it propagated 5,600 of 5,600 <code>Required</code> sends, at a median of 418&nbsp;ms.</li>
+    <li><b>Master breaks under churn; the PR stack does not.</b> On a small network, one stopped mix node made a third of master's sends report failure. The stack through #4647 lost nothing when 5 of 25 mix nodes were stopped for 21 minutes.</li>
+    <li><b>The stack and issue 183 barely overlap.</b> The stack makes today's sends reliable and safe behind NAT. Issue 183's items (cover traffic, Edge/Core wiring, memberships, API cleanup) are untouched by it.</li>
+    <li><b>Mix over RLN works, but its cost could not be measured at 46 nodes on one host.</b> Proof generation saturated the machine. <span id="rln-summary">At 23 nodes it delivered 2,747 of 2,750 sends at a median of 1.6&nbsp;s, about 1.2&nbsp;s more than without RLN, using 4.3 cores against about 2 for twice the nodes without it.</span></li>
+  </ul>
+</div>
+</section>
+
+<section id="s2" class="sagebg">
+<div class="wrap">
+  <div class="num">02</div><h2>Current state: master and the PR stack</h2>
+
+  <h3>logos-delivery master <code>39b5f4ee9</code></h3>
+  <p>Mix gives sender anonymity on publish and nothing else. Every node that mounts mix is both hop and exit, lightpush is the only exit protocol, and receiving never uses mix.</p>
+  <div class="cols">
+    <div>
+      <p><b>Works</b></p>
+      <ul>
+        <li>Mount, hop selection (IPv4 TCP/QUIC), static <code>--mixnode</code> list, preset-seeded pool.</li>
+        <li>Mix key advertised through Kad service records and rendezvous.</li>
+        <li><code>anonymityLevel</code> <code>Preferred</code> / <code>Required</code>: 3-hop path, one single-use reply block, 5&nbsp;s reply timeout, at least 4 routable pool members.</li>
+        <li>Per-hop Mix RLN (#4282), <code>mix_pool_size</code> gauge, mix in health.</li>
+      </ul>
+    </div>
+    <div>
+      <p><b>Limits</b></p>
+      <ul>
+        <li>The default <code>anonymityLevel</code> is <code>None</code>; presets list mix nodes but do not enable mix.</li>
+        <li>The mix key is regenerated at every start unless <code>--mixkey</code> is set.</li>
+        <li>No cover traffic. No Edge/Core difference: any mix-mounted node advertises, forwards and exits.</li>
+        <li>discv5 and peer exchange cannot feed the pool (the ENR carries only a capability bit).</li>
+        <li><code>Preferred</code> falls back to the plain path silently, including for a payload too large for mix (logos-delivery#4690).</li>
+        <li>Uses <code>nim-libp2p-mix</code> at <code>3f256aa0</code>, 11 commits behind upstream; the missing commits include Sphinx MAC and replay-cache fixes.</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>The PR stack (#4631 → #4647), open and unreviewed</h3>
+  <div class="tw"><table>
+    <tr><th>PR</th><th>What it changes</th><th>Master behaviour</th><th>Measured in the harness</th></tr>
+    <tr><td>#4631</td><td>The last reply hop is a peer already connected to the sender. Mix nodes are used only at public or relayed addresses, with <code>mix-allow-all-addresses</code> to opt out.</td><td>Random last reply hop: replies to a sender behind NAT are lost. Any IPv4 address accepted.</td><td>The opt-out was needed on the harness's private network. NAT itself not exercised.</td></tr>
+    <tr><td>#4632</td><td>Stale discovered mix keys are not selected.</td><td>Selected regardless of age.</td><td>Not exercised.</td></tr>
+    <tr><td>#4635</td><td>Failed mix dials go into backoff; a peer that refuses Mix loses its discovered key.</td><td>The same dead hop is picked again.</td><td>Dead hop left the pool (7 → 6); on master it stayed at 7.</td></tr>
+    <tr><td>#4636</td><td>Mix health refreshes every 5&nbsp;s.</td><td>Stale until a peer-store event.</td><td>Not exercised.</td></tr>
+    <tr><td>#4640</td><td>Configured mix nodes survive a peer-store prune.</td><td>Pruned first; the pool can empty.</td><td>Not exercised.</td></tr>
+    <tr><td>#4646</td><td>Mix is advertised only from a service node with a non-observed address.</td><td>Every mix-mounted node advertises.</td><td>Not exercised (static pools).</td></tr>
+    <tr><td>#4647</td><td>A send completes when the sender sees its own message, even if the reply is lost.</td><td>The retry is refused as a duplicate and the send ends in <code>messageError</code>.</td><td>Small churn run: 86 false errors on master, 0 on the stack.</td></tr>
+    <tr><td>#4729 (draft, separate)</td><td>Re-pins the mix library; public or relayed addresses only.</td><td>—</td><td>Alone it behaves like master under churn (84 false errors).</td></tr>
+  </table></div>
+
+  <h3>Small-network comparison (7 mix nodes, one stopped mid-run)</h3>
+  <div class="tw"><table>
+    <tr><th>Build</th><th class="n">Sends after the stop</th><th class="n">False <code>messageError</code></th><th class="n">Reached all receivers</th><th class="n">p90 after the stop</th><th>Dead hop evicted</th></tr>
+    <tr><td>master <code>39b5f4ee9</code></td><td class="n">263</td><td class="n">86 (33%)</td><td class="n">294/420</td><td class="n">11.9 s</td><td>no</td></tr>
+    <tr><td>#4647 stack</td><td class="n">261</td><td class="n">0</td><td class="n">420/420</td><td class="n">0.74 s</td><td>yes</td></tr>
+    <tr><td>#4729 alone</td><td class="n">259</td><td class="n">84 (32%)</td><td class="n">276/420</td><td class="n">11.5 s</td><td>no</td></tr>
+  </table></div>
+  <p>The stack also fixes a second master fault: a node acting as exit does not deliver the message it publishes to its own application.</p>
+</div>
+</section>
+
+<section id="s3">
+<div class="wrap">
+  <div class="num">03</div><h2>What issue 183 requires</h2>
+  <p class="lead">logos-co/logos-delivery-module#183 proposes keeping Mix inside <code>delivery_module</code>, in two modes, with no Mix API of its own.</p>
+
+  <div class="tw"><table>
+    <tr><th></th><th>Edge</th><th>Core</th></tr>
+    <tr><td>Services</td><td>Lightpush and Filter clients</td><td>Relay, Lightpush, Filter, discv5, peer exchange; rendezvous off</td></tr>
+    <tr><td>Own sends</td><td>Every send over Mix to an exit's Lightpush</td><td>Over Mix when <code>Preferred</code> or <code>Required</code></td></tr>
+    <tr><td>Forwarding and exit</td><td>None</td><td>Forwards; exit hands to local Lightpush</td></tr>
+    <tr><td>Mix advert</td><td>Must not publish its key</td><td>Service record with its key</td></tr>
+    <tr><td>Cover traffic</td><td>Off</td><td>On</td></tr>
+    <tr><td>Coordination</td><td>Off</td><td>Over Relay, batched</td></tr>
+    <tr><td>Memberships</td><td>Mix only</td><td>Mix and Relay</td></tr>
+    <tr><td>NAT</td><td>Circuit-relay client on by default</td><td>Circuit-relay server</td></tr>
+    <tr><td>Ready when</td><td>Started, Mix membership active</td><td>Started, memberships active, advertising</td></tr>
+  </table></div>
+
+  <h3>Work items</h3>
+  <div class="tw"><table>
+    <tr><th>#</th><th>Kind</th><th>Item</th><th>What it asks for</th></tr>
+    <tr><td>0</td><td>Functional</td><td>Batch Mix coordination in Core</td><td>Fewer coordination frames over Relay (mix-rln-spam-protection-plugin#30). Lands before cover traffic.</td></tr>
+    <tr><td>1</td><td>Functional</td><td>Cover traffic on in Core</td><td>Constant-rate cover: 100 slots per 10&nbsp;s epoch, cover fraction 0.7.</td></tr>
+    <tr><td>2</td><td>Functional</td><td>Advertise only in Core</td><td>Edge publishes its key nowhere: no service advert, no ENR Mix bit, no rendezvous record. Rendezvous goes away where service discovery is on.</td></tr>
+    <tr><td>3</td><td>Functional</td><td>No Mix coordination in Edge</td><td>Mix RLN starts without Relay RLN, no metadata-topic subscription. Edge needs only a Mix membership.</td></tr>
+    <tr><td>4</td><td>Functional</td><td>Membership check and readiness</td><td>Separate Relay and Mix memberships on separate registries. Membership state reported through health, not at the first failed proof.</td></tr>
+    <tr><td>5</td><td>Interface</td><td><code>mode</code> decides how Mix runs</td><td>Default <code>anonymityLevel</code> becomes <code>Preferred</code>. Edge gets the circuit-relay client. Core turns Mix on directly. Presets carry the Mix RLN settings.</td></tr>
+    <tr><td>6</td><td>Cleanup</td><td>e2e fixture on Delivery only</td><td>Sender in Edge mode, hops and exit in Core mode; no <code>libp2p_mix_rln_module</code>.</td></tr>
+    <tr><td>7</td><td>Cleanup</td><td>Drop the Mix API</td><td>Remove <code>getLocalMixPeerRecord</code>, <code>addMixPeer</code> and <code>mix_api.nim</code>.</td></tr>
+  </table></div>
+
+  <p><b>Network values for testnet v0.4:</b> Mix registry with a 10&nbsp;s epoch, <code>max_epoch_gap</code> 3 and rate bounds 20–100 (Edge 20, Core 100); Relay registry with a 600&nbsp;s epoch (Core 600; Edge has no Relay membership).</p>
+  <p><b>External dependencies:</b> circuit-relay server defaults on fleet and Core nodes; a deployed Mix registry with a 10&nbsp;s epoch (and an LEZ program build with 20–100 bounds); rate tiers in the gifter.</p>
+</div>
+</section>
+
+<section id="s4" class="dark">
+<div class="wrap">
+  <div class="num">04</div><h2>Feature matrix and deviations</h2>
+  <p>Master cells come from reading the code at <code>39b5f4ee9</code>. Stack cells come from the PR descriptions, not their diffs, unless a harness measurement is named.</p>
+
+  <div class="tw"><table>
+    <tr><th>#</th><th>Issue 183 item</th><th>master</th><th>PR stack (#4631 → #4647)</th><th>Parity</th></tr>
+    <tr><td>0</td><td>Batched coordination in Core</td><td>One metadata frame per verified proof</td><td>Not touched</td><td><span class="tag miss">missing in both</span></td></tr>
+    <tr><td>1</td><td>Cover traffic in Core</td><td>None: <code>WakuMix.new</code> passes no cover traffic</td><td>Not touched</td><td><span class="tag miss">missing in both</span></td></tr>
+    <tr><td>2</td><td>Advertise the Mix key only in Core</td><td>Every mix-mounted node advertises, Edge included (<code>self_advertisement.nim:153-175</code>)</td><td>#4646: only a service node with a non-observed address advertises</td><td><span class="tag part">partial, different rule</span></td></tr>
+    <tr><td>3</td><td>No Mix coordination in Edge</td><td>Mix RLN refuses to start without Relay RLN (<code>mix_rln.nim:59-60</code>)</td><td>Not touched</td><td><span class="tag miss">missing in both</span></td></tr>
+    <tr><td>4</td><td>Membership check and readiness</td><td>Mix membership not in health; a node without one fails at its first send</td><td>#4636 and #4631 keep Mix <i>pool</i> health current; nothing on memberships</td><td><span class="tag part">partial: pool only</span></td></tr>
+    <tr><td>5</td><td><code>mode</code> decides Mix; default <code>Preferred</code>; Mix RLN in presets</td><td>Default <code>None</code> (<code>logos_delivery_conf.nim:30</code>); Mix off; presets have no <code>mix-rln-*</code></td><td>Not touched</td><td><span class="tag miss">missing in both</span></td></tr>
+    <tr><td>5</td><td>NAT: Edge gets a relayed reply address</td><td>Random last reply hop; replies to a NATed sender are lost</td><td>#4631: last reply hop is a peer already connected to the sender</td><td><span class="tag part">goal met, other mechanism</span></td></tr>
+    <tr><td>6</td><td>e2e fixture on Delivery only</td><td colspan="2">Module repository work</td><td><span class="tag na">out of scope</span></td></tr>
+    <tr><td>7</td><td>Drop the Mix API</td><td>Present</td><td>Present; #4631 edits <code>mix_api.nim</code></td><td><span class="tag miss">missing in both</span></td></tr>
+    <tr><td>—</td><td>Separate Relay and Mix registries</td><td>One RLN backend; Mix RLN needs a 10&nbsp;s epoch and <code>max-epoch-gap</code> 3 on it</td><td>Not touched</td><td><span class="tag miss">missing in both</span></td></tr>
+  </table></div>
+
+  <h3>Deviations to settle</h3>
+  <ul>
+    <li><b>Who advertises.</b> Issue 183 keys it on <code>mode</code>. #4646 keys it on being a service node with a non-observed address. A Core node behind NAT and an Edge node with a public address fall on opposite sides of the two rules.</li>
+    <li><b>NAT replies.</b> Issue 183 relies on circuit relay to give Edge a reply address. #4631 avoids needing one. They can coexist; if #4631 lands, the issue's dependency on relay limits mostly goes away.</li>
+    <li><b>Senders are mix nodes too.</b> In every large run the 8 senders also forwarded and exited for others (8 of the 33 exit nodes). Edge mode in issue 183 would stop that; the stack does not.</li>
+    <li><b>Where the Relay proof is attached.</b> The issue says the exit attaches it. On master the sender does (<code>node/waku_node/lightpush.nim:398</code>), so the issue's Edge rate reasoning does not hold as written.</li>
+    <li><b>One registry today.</b> The harness ran Relay and Mix on one registry at 10&nbsp;s, and one membership backed both scopes. It works, and it is the arrangement issue 183 wants to leave.</li>
+    <li><b>Addressed by none of the three:</b> a <code>Preferred</code> send too large for mix goes out in the clear without notice (logos-delivery#4690).</li>
+  </ul>
+</div>
+</section>
+
+<section id="s5">
+<div class="wrap">
+  <div class="num">05</div><h2>The test harness</h2>
+  <p class="lead">A manifest describes groups of nodes; the harness builds one image from pinned sources, generates a Docker Compose stack on a private <code>10.0.0.0/8</code> network, runs it for a fixed time and collects events, logs and metrics.</p>
+
+  <div class="cols">
+    <div>
+      <h3>Build</h3>
+      <ul>
+        <li><b>One pin:</b> the <code>logos-delivery-module</code> ref. Every other component comes from that module's flake lock.</li>
+        <li><b>Overrides</b> replace one component: <code>DELIVERY_REF</code> built master, the #4647 stack tip and #4729 for these runs.</li>
+        <li>Nix builds run in a container with a persistent store volume; the result is the image <code>logos-sim:local</code>.</li>
+        <li><b>RLN is opt-in</b> (<code>"rln": {}</code> in the manifest): the two RLN modules are built too, and three more services run a local LEZ chain.</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Node kinds</h3>
+      <ul>
+        <li><code>logosdeliverynode</code>: the native node binary, configured by CLI arguments.</li>
+        <li><code>delivery-module</code>: <code>delivery_module</code> under <code>logoscore</code>, configured by a JSON profile template (<code>conf/*.json.tpl</code>) and environment values.</li>
+        <li>Roles: <code>bootstrap</code> (fixed address and key) and <code>member</code> (count, start delay, jitter).</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Traffic and measurement</h3>
+      <ul>
+        <li>A sender calls the module's <code>send</code>: <code>SEND_COUNT</code> messages every <code>SEND_INTERVAL</code> seconds, with a given <code>ANONYMITY_LEVEL</code>.</li>
+        <li>Every module node records its events (<code>messagePropagated</code>, <code>messageSent</code>, <code>messageError</code>, <code>messageReceived</code>) with a local nanosecond stamp.</li>
+        <li><code>lib/msg_report.py</code> matches message hashes across nodes: success, latency percentiles, 5-minute steps.</li>
+        <li>Routes: exit node per message and tries per message from node logs; per-node forward counts from Prometheus.</li>
+        <li>Resources: <code>docker stats</code> every 30&nbsp;s.</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>Topology of the large runs</h3>
+  <figure>
+  <svg viewBox="0 0 1100 560" role="img" aria-label="Topology: one bootstrap, 25 mix nodes, 8 senders, 12 receivers, metrics and optional LEZ services on one Docker network">
+    <rect x="1" y="1" width="1098" height="558" fill="none" stroke="#4E635E" stroke-dasharray="6 5"/>
+    <text x="16" y="24" font-size="13" fill="#4E635E">Docker network 10.0.0.0/8 · cluster 42 · one shard</text>
+
+    <!-- infra -->
+    <g font-size="12">
+      <rect x="30" y="50" width="190" height="64" fill="#0E2618"/>
+      <text x="125" y="76" text-anchor="middle" fill="#fff" font-size="14">bootstrap</text>
+      <text x="125" y="96" text-anchor="middle" fill="#b9c2b0">10.0.0.10 · Kad entry, store</text>
+
+      <rect x="30" y="130" width="190" height="52" fill="#DDDED8" stroke="#4E635E"/>
+      <text x="125" y="152" text-anchor="middle" font-size="13">Prometheus · Grafana</text>
+      <text x="125" y="170" text-anchor="middle" fill="#4E635E">10.0.0.11 · 10.0.0.12</text>
+
+      <rect x="30" y="198" width="190" height="96" fill="none" stroke="#E46962" stroke-dasharray="5 4"/>
+      <text x="125" y="218" text-anchor="middle" font-size="13">LEZ chain (RLN runs only)</text>
+      <text x="125" y="240" text-anchor="middle" fill="#4E635E">sequencer 10.0.0.13</text>
+      <text x="125" y="258" text-anchor="middle" fill="#4E635E">lez-init · lez-setup</text>
+      <text x="125" y="278" text-anchor="middle" fill="#4E635E">registry, funding on request</text>
+    </g>
+
+    <!-- senders -->
+    <rect x="30" y="330" width="190" height="200" fill="#4E635E"/>
+    <text x="125" y="356" text-anchor="middle" fill="#fff" font-size="15">8 senders</text>
+    <text x="125" y="378" text-anchor="middle" fill="#dfe4d8" font-size="12">delivery-module, Core mode</text>
+    <text x="125" y="396" text-anchor="middle" fill="#dfe4d8" font-size="12">anonymityLevel Required</text>
+    <text x="125" y="414" text-anchor="middle" fill="#dfe4d8" font-size="12">700 messages, one every 5 s</text>
+    <text x="125" y="432" text-anchor="middle" fill="#dfe4d8" font-size="12">static pool: all 25 mix nodes</text>
+    <g fill="#E2E0C9"><circle cx="62" cy="470" r="9"/><circle cx="92" cy="470" r="9"/><circle cx="122" cy="470" r="9"/><circle cx="152" cy="470" r="9"/><circle cx="182" cy="470" r="9"/><circle cx="77" cy="498" r="9"/><circle cx="122" cy="498" r="9"/><circle cx="167" cy="498" r="9"/></g>
+
+    <!-- mix cloud -->
+    <rect x="330" y="50" width="440" height="480" fill="#E2E0C9" stroke="#0E2618" stroke-width="1.5"/>
+    <text x="550" y="78" text-anchor="middle" font-size="15">25 mix nodes</text>
+    <text x="550" y="98" text-anchor="middle" font-size="12" fill="#4E635E">relay + lightpush + mix · fixed node key and mix key · one /16 each</text>
+    <g id="mixdots" fill="#0E2618"></g>
+    <!-- path -->
+    <g fill="none" stroke="#E46962" stroke-width="2.5">
+      <path d="M220 420 L400 330"/><path d="M400 330 L540 200"/><path d="M540 200 L680 330"/>
+    </g>
+    <g fill="#E46962"><circle cx="400" cy="330" r="11"/><circle cx="540" cy="200" r="11"/><circle cx="680" cy="330" r="11"/></g>
+    <g font-size="12" fill="#222021">
+      <text x="400" y="358" text-anchor="middle">hop 1</text><text x="540" y="182" text-anchor="middle">hop 2</text>
+      <text x="680" y="358" text-anchor="middle">hop 3 = exit</text>
+      <text x="680" y="374" text-anchor="middle" fill="#4E635E">lightpush, then relay publish</text>
+    </g>
+    <path d="M660 345 Q540 470 222 440" fill="none" stroke="#E46962" stroke-width="1.5" stroke-dasharray="5 4"/>
+    <text x="470" y="462" font-size="12" fill="#4E635E">reply over a single-use reply block</text>
+    <text x="550" y="514" text-anchor="middle" font-size="12" fill="#4E635E">native logosdeliverynode in runs 1–3 · delivery-module with Mix RLN in run 4</text>
+
+    <!-- receivers -->
+    <rect x="880" y="130" width="190" height="320" fill="#4E635E"/>
+    <text x="975" y="158" text-anchor="middle" fill="#fff" font-size="15">12 receivers</text>
+    <text x="975" y="180" text-anchor="middle" fill="#dfe4d8" font-size="12">delivery-module, relay</text>
+    <text x="975" y="198" text-anchor="middle" fill="#dfe4d8" font-size="12">record messageReceived</text>
+    <g fill="#E2E0C9"><circle cx="925" cy="250" r="9"/><circle cx="975" cy="250" r="9"/><circle cx="1025" cy="250" r="9"/><circle cx="925" cy="290" r="9"/><circle cx="975" cy="290" r="9"/><circle cx="1025" cy="290" r="9"/><circle cx="925" cy="330" r="9"/><circle cx="975" cy="330" r="9"/><circle cx="1025" cy="330" r="9"/><circle cx="925" cy="370" r="9"/><circle cx="975" cy="370" r="9"/><circle cx="1025" cy="370" r="9"/></g>
+    <path d="M691 330 L880 300" stroke="#0E2618" stroke-width="2.5" fill="none"/>
+    <text x="785" y="296" text-anchor="middle" font-size="12">relay gossip</text>
+    <text x="785" y="330" text-anchor="middle" font-size="12" fill="#4E635E">to all 45 other nodes</text>
+
+    <path d="M220 82 L330 82" stroke="#4E635E" stroke-dasharray="3 4" fill="none"/>
+    <text x="275" y="74" text-anchor="middle" font-size="11" fill="#4E635E">Kad</text>
+  </svg>
+  <figcaption>46 nodes: 1 bootstrap, 25 mix nodes, 8 senders, 12 receivers, plus Prometheus and Grafana. The coral path is one message: three mix hops chosen by the sender, the last one publishing through lightpush into relay. Senders and receivers reach the network through the bootstrap; senders are handed all 25 mix nodes at start, so sending does not wait for discovery. Senders mount mix too, so they also serve as hops and exits for each other.</figcaption>
+  </figure>
+
+  <h3>Images used</h3>
+  <div class="tw"><table>
+    <tr><th>Image</th><th>logos-delivery</th><th>Extra modules</th><th>Used in</th></tr>
+    <tr><td><code>logos-sim:master-39b5f4ee</code></td><td>master <code>39b5f4ee9</code></td><td>—</td><td>Run 2, small-network baseline</td></tr>
+    <tr><td><code>logos-sim:pr4647</code></td><td>#4647 tip <code>69f3ff21</code> (whole stack)</td><td>—</td><td>Runs 1 and 3, small-network comparison</td></tr>
+    <tr><td><code>logos-sim:pr4729</code></td><td>#4729 <code>9bba0e88</code></td><td>—</td><td>Small-network comparison</td></tr>
+    <tr><td><code>logos-sim:pr4647-rln</code></td><td>#4647 tip</td><td><code>liblogos_rln_module</code> 0.12.0, <code>liblogos_lez_rln_module</code> 5.1.0</td><td>Run 4 and its rerun</td></tr>
+    <tr><td><code>logos-sim-lez-sequencer</code>, <code>logos-sim-lez</code></td><td colspan="2">LEZ sequencer v0.3.2 and logos-lez-rln tools, built natively for arm64</td><td>RLN runs</td></tr>
+  </table></div>
+</div>
+</section>
+
+<section id="s6" class="dark">
+<div class="wrap">
+  <div class="num">06</div><h2>The four cases</h2>
+  <p>Run 4b is the smaller rerun of run 4. Runs 1 to 4: 46 nodes, 8 senders, 700 <code>Required</code> messages per sender at one every 5&nbsp;s (1.6 messages per second in total), about 58 minutes of sending.</p>
+
+  <div class="tw"><table>
+    <tr><th>Run</th><th>Build</th><th class="n">Propagated</th><th class="n">Reached all receivers</th><th class="n">p50 / p90 / p99 send → propagated</th><th class="n">Errors</th></tr>
+    <tr><td>1. Steady state</td><td>#4647 stack</td><td class="n">5,600 / 5,600</td><td class="n">5,600 / 5,600</td><td class="n">450 / 710 / 993 ms</td><td class="n">0</td></tr>
+    <tr><td>2. Steady state</td><td>master</td><td class="n">5,600 / 5,600</td><td class="n">4,450 / 5,600</td><td class="n">418 / 677 / 943 ms</td><td class="n">0</td></tr>
+    <tr><td>3. Churn: 5 of 25 mix nodes down for 21 min</td><td>#4647 stack</td><td class="n">5,600 / 5,600</td><td class="n">5,600 / 5,600</td><td class="n">450 / 755 ms / 15.9 s</td><td class="n">0</td></tr>
+    <tr><td>4. Mix RLN, 45 RLN nodes</td><td>#4647 stack + RLN</td><td class="n">65 / 4,082</td><td class="n">65 / 4,082</td><td class="n">not meaningful</td><td class="n">3,940</td></tr>
+    <tr id="rln-row"><td>4b. Mix RLN, 22 RLN nodes</td><td>#4647 stack + RLN</td><td class="n">2,747 / 2,750</td><td class="n">2,748 / 2,750</td><td class="n">1,618 / 1,979 / 2,512 ms</td><td class="n">0</td></tr>
+  </table></div>
+
+  <h3>Runs 1 and 2: steady state, stack against master</h3>
+  <div class="tw"><table>
+    <tr><th>Measure</th><th class="n">master</th><th class="n">#4647 stack</th></tr>
+    <tr><td>Propagated through mix</td><td class="n">5,600 / 5,600</td><td class="n">5,600 / 5,600</td></tr>
+    <tr><td>Reached all 19 other module nodes</td><td class="n">4,450 / 5,600</td><td class="n">5,600 / 5,600</td></tr>
+    <tr><td>Send → propagated, p50 / p90 / p99</td><td class="n">418 / 677 / 943 ms</td><td class="n">450 / 710 / 993 ms</td></tr>
+    <tr><td>Send → received, p50 / p90 / p99</td><td class="n">219 / 417 / 649 ms</td><td class="n">246 / 440 / 673 ms</td></tr>
+    <tr><td>Median latency across the hour</td><td class="n">406–426 ms</td><td class="n">430–468 ms</td></tr>
+    <tr><td>Exits per node, min / median / max</td><td class="n">128 / 172 / 211</td><td class="n">130 / 172 / 207</td></tr>
+    <tr><td>Packets forwarded per node, min / median / max</td><td class="n">975 / 1,071 / 1,630</td><td class="n">981 / 1,083 / 1,662</td></tr>
+    <tr><td>Tries per message</td><td class="n">1</td><td class="n">1</td></tr>
+    <tr><td>Reply timeouts</td><td class="n">0</td><td class="n">0</td></tr>
+    <tr><td>Memory peak, mean CPU (all containers)</td><td class="n">4.2 GiB, 1.6 cores</td><td class="n">4.2 GiB, 2.0 cores</td></tr>
+  </table></div>
+  <ul>
+    <li><b>Master's 1,150 incomplete deliveries are each missing at exactly one node.</b> The nodes missing them are the senders (146–161 each), which are also exits: an exit does not deliver the message it publishes to its own application. Plain receivers missed nothing.</li>
+    <li><b>Routes are evenly spread.</b> 33 nodes served as exit (25 mix nodes and the 8 senders), with a coefficient of variation of 0.12. Each message caused 7 forwards in total across the mix nodes.</li>
+    <li><b>The stack is about 30&nbsp;ms slower at every percentile.</b> One run each, so this is not established as a real cost.</li>
+  </ul>
+
+  <h3>Run 3: churn on the stack</h3>
+  <p>Five mix nodes were stopped about 21 minutes after the first send and restarted about 21 minutes later.</p>
+  <figure>
+    <svg id="chart" viewBox="0 0 1000 340" role="img" aria-label="p90 latency per five-minute step, run 1 against run 3"></svg>
+    <figcaption>90th-percentile latency from send to propagated, per 5-minute step, on a logarithmic scale. The shaded band is the time the five nodes were down.</figcaption>
+  </figure>
+  <div class="tw"><table>
+    <tr><th>Measure</th><th class="n">Result</th></tr>
+    <tr><td>Propagated; reached all receivers</td><td class="n">5,600 / 5,600; 5,600 / 5,600</td></tr>
+    <tr><td>Latency, whole run</td><td class="n">p50 450 ms, p90 755 ms, p99 15.9 s, max 47.4 s</td></tr>
+    <tr><td>Messages needing a retry (of 4,900 with route data)</td><td class="n">142: 110 took 2 tries, 25 took 3, 7 took 4</td></tr>
+    <tr><td>Hop-side forwarding errors</td><td class="n">236 across 28 nodes</td></tr>
+    <tr><td>Exits at the restarted nodes <code>mix23</code>–<code>mix25</code></td><td class="n">100–118, against a median of 181</td></tr>
+  </table></div>
+  <ul>
+    <li><b>Nothing was lost.</b> A message whose path crossed a dead hop was retried and succeeded.</li>
+    <li><b>Recovery took 5 to 8 minutes, while the nodes were still down.</b> Senders stopped choosing the dead hops; they did not wait for them to return.</li>
+    <li><b>The restarted nodes were used again</b> in proportion to their time in service.</li>
+    <li>Churn was not repeated on master at this size; the small-network run in section 02 is the comparison.</li>
+  </ul>
+
+  <h3>Run 4: Mix RLN at 46 nodes — an overload, not a measurement</h3>
+  <p>The 25 mix nodes became <code>delivery-module</code> nodes with Relay RLN and Mix RLN on a local LEZ chain; all 45 module nodes held a membership before sending began.</p>
+  <div class="kpis">
+    <div class="kpi bad"><b>65 / 4,082</b><span>sends propagated</span></div>
+    <div class="kpi bad"><b>8.7 of 10</b><span>cores in use from minute 7 to the end (runs 1–3: about 2)</span></div>
+    <div class="kpi bad"><b>9–10 s</b><span>proof generation logged on a mix node</span></div>
+    <div class="kpi"><b>~4,500</b><span>coordination frames received per node, 16 times the application messages</span></div>
+  </div>
+  <ul>
+    <li><b>Errors:</b> 3,235 "Unable to send within retry time window" and 689 "timestamp is outside the acceptable epoch window". Proofs took longer than their 30&nbsp;s validity window.</li>
+    <li><b>Why this is overload:</b> the same build with 7 RLN nodes delivered 10 of 10 at a 1.59&nbsp;s median.</li>
+    <li><b>Likely driver:</b> the coordination frames, which every validating node verifies. This is the cost issue 183 item 0 wants to cut by batching. The CPU was not profiled.</li>
+  </ul>
+
+  <h3>Run 4b: Mix RLN at a size the host can carry</h3>
+  <div id="rln-rerun">
+  <p>23 nodes: 1 bootstrap, 12 <code>delivery-module</code> mix nodes, 4 senders, 6 receivers; 22 of them hold an RLN membership. Same rate per sender as the other runs (0.8 messages per second in total), about 57 minutes of sending.</p>
+  <div class="kpis">
+    <div class="kpi"><b>2,747 / 2,750</b><span>sends propagated, 0 errors</span></div>
+    <div class="kpi"><b>1.62 s</b><span>median send → propagated (0.45 s without RLN)</span></div>
+    <div class="kpi"><b>4.3 of 10</b><span>cores in use, flat across the hour</span></div>
+    <div class="kpi"><b>146–215 ms</b><span>proof generation logged on a mix node (9–10 s in run 4)</span></div>
+  </div>
+  <div class="tw"><table>
+    <tr><th>Measure</th><th class="n">Run 4b, Mix RLN, 23 nodes</th><th class="n">Run 1, no RLN, 46 nodes</th></tr>
+    <tr><td>Propagated through mix</td><td class="n">2,747 / 2,750</td><td class="n">5,600 / 5,600</td></tr>
+    <tr><td>Reached all receivers</td><td class="n">2,748 / 2,750</td><td class="n">5,600 / 5,600</td></tr>
+    <tr><td>Send errors</td><td class="n">0</td><td class="n">0</td></tr>
+    <tr><td>Send → propagated, p50 / p90 / p99</td><td class="n">1,618 / 1,979 / 2,512 ms</td><td class="n">450 / 710 / 993 ms</td></tr>
+    <tr><td>Send → received, p50 / p90 / p99</td><td class="n">904 / 1,167 / 1,635 ms</td><td class="n">246 / 440 / 673 ms</td></tr>
+    <tr><td>Median latency across the hour</td><td class="n">1,561–1,721 ms</td><td class="n">430–468 ms</td></tr>
+    <tr><td>Exits per node, min / median / max</td><td class="n">125 / 178 / 200 over 16 nodes</td><td class="n">130 / 172 / 207 over 33 nodes</td></tr>
+    <tr><td>Tries per message; reply timeouts</td><td class="n">1; 0</td><td class="n">1; 0</td></tr>
+    <tr><td>Coordination frames received, all nodes</td><td class="n">263,750 (about 12,000 per node)</td><td class="n">—</td></tr>
+    <tr><td>Memory peak, mean / peak CPU</td><td class="n">4.0 GiB, 4.3 / 7.7 cores</td><td class="n">4.2 GiB, 2.0 / 5.1 cores</td></tr>
+  </table></div>
+  <ul>
+    <li><b>Mix over RLN delivers at this size.</b> No send failed; the 3 sends without a propagation event are the last ones, in flight when the run ended, which also cut each sender at 687–688 of its 700 messages. The harness verdict line says FAIL for that reason alone.</li>
+    <li><b>RLN adds about 1.2&nbsp;s to the median and 1.5&nbsp;s to the p99.</b> The latency is stable across the hour, so the host was not falling behind.</li>
+    <li><b>The CPU cost is the finding.</b> Half the nodes and half the traffic of run 1 used twice the CPU. Each node received about 4.4 coordination frames for every application message. Where the CPU goes between proof generation and frame verification was not profiled.</li>
+    <li><b>Route spread is unchanged</b> by RLN: 16 exits (12 mix nodes and the 4 senders), coefficient of variation 0.13.</li>
+  </ul>
+</div>
+</div>
+</section>
+
+<section id="s7">
+<div class="wrap">
+  <div class="num">07</div><h2>Limits of this evidence</h2>
+  <ul>
+    <li><b>One host.</b> All nodes share 10 cores and one loopback-fast network. There is no added latency, loss or NAT; #4631's NAT behaviour was not exercised.</li>
+    <li><b>Static pools.</b> Senders were given all mix nodes at start. Discovery-fed pools were only tested on the small network, where the pool took about 16 minutes to fill.</li>
+    <li><b>One run per case.</b> Differences of a few tens of milliseconds are within what a repeat could move.</li>
+    <li><b>Route data gaps.</b> In runs 2 and 3 one sender's log was cut short at collection, so exit and retry figures cover 7 of 8 senders there. Delivery and latency figures are complete.</li>
+    <li><b>Stack cells in the matrix are from PR descriptions.</b> Not verified: whether #4646 also stops the ENR Mix bit and the rendezvous record.</li>
+    <li><b>Not tested:</b> cover traffic, Edge-mode senders, separate Relay and Mix registries, a validating node dropping a message without a proof, rate-limit bursts.</li>
+  </ul>
+  <p>Collected data: <code>out/collect/mixnet-pr</code>, <code>mixnet-master</code>, <code>mixnet-pr-churn</code>, <code>mixnet-pr-rln</code>, <code>mixnet-pr-rln-small</code> in the harness checkout.</p>
+</div>
+</section>
+
+<footer><div class="wrap"><span class="l">λ</span> Logos.co · logos-delivery-test-harness · mix over delivery</div></footer>
+
+<script>
+// 25 mix-node dots on a 5x5 grid, leaving the three highlighted hops in place.
+(function(){
+  var g=document.getElementById('mixdots'),ns='http://www.w3.org/2000/svg',skip={'400,330':1,'540,200':1,'680,330':1};
+  for(var r=0;r<5;r++)for(var c=0;c<5;c++){
+    var x=400+c*70,y=135+r*65+(c%2?0:0); var k=x+','+y;
+    if(skip[k])continue;
+    var e=document.createElementNS(ns,'circle');e.setAttribute('cx',x);e.setAttribute('cy',y);e.setAttribute('r',8);g.appendChild(e);
+  }
+})();
+// p90 per 5-minute step.
+(function(){
+  var run1=[729,694,725,715,686,716,686,688,721,704,726,702],
+      run3=[675,753,675,728,15449,1317,828,888,749,701,678,664],
+      t=[0,5,10,15,20,24,29,34,39,44,49,54];
+  var s=document.getElementById('chart'),ns='http://www.w3.org/2000/svg',L=70,R=970,T=20,B=290;
+  function X(m){return L+(R-L)*m/58}
+  function Y(v){return B-(B-T)*(Math.log10(v)-Math.log10(300))/(Math.log10(30000)-Math.log10(300))}
+  function el(n,a,txt){var e=document.createElementNS(ns,n);for(var k in a)e.setAttribute(k,a[k]);if(txt!=null)e.textContent=txt;s.appendChild(e);return e}
+  el('rect',{x:X(21),y:T,width:X(42)-X(21),height:B-T,fill:'#ffffff',opacity:.08});
+  el('text',{x:(X(21)+X(42))/2,y:T+16,'text-anchor':'middle','font-size':12,fill:'#b9c2b0'},'5 mix nodes down');
+  [300,1000,3000,10000,30000].forEach(function(v){
+    el('line',{x1:L,x2:R,y1:Y(v),y2:Y(v),stroke:'#ffffff',opacity:.15});
+    el('text',{x:L-8,y:Y(v)+4,'text-anchor':'end','font-size':12,fill:'#b9c2b0'},v>=1000?(v/1000)+' s':v+' ms');
+  });
+  [0,10,20,30,40,50].forEach(function(m){el('text',{x:X(m),y:B+20,'text-anchor':'middle','font-size':12,fill:'#b9c2b0'},m+' min')});
+  function line(d,col,w,label,ly){
+    el('polyline',{points:d.map(function(v,i){return X(t[i]+2.5)+','+Y(v)}).join(' '),fill:'none',stroke:col,'stroke-width':w});
+    d.forEach(function(v,i){el('circle',{cx:X(t[i]+2.5),cy:Y(v),r:3.5,fill:col}).appendChild(document.createElementNS(ns,'title')).textContent=t[i]+' min: '+v+' ms'});
+    el('text',{x:R-4,y:ly,'text-anchor':'end','font-size':13,fill:col},label);
+  }
+  line(run1,'#E2E0C9',2,'Run 1, steady',Y(702)+22);
+  line(run3,'#E46962',2.5,'Run 3, churn',Y(664)-28);
+  el('text',{x:X(22.5)+10,y:Y(15449)+4,'font-size':12,fill:'#E46962'},'15.4 s');
+  el('text',{x:L,y:B+42,'font-size':12,fill:'#b9c2b0'},'minutes after the first send');
+})();
+</script>
+</body>
+</html>
