@@ -12,8 +12,13 @@ own messagePropagated / messageSent / messageError events carry; a receiver's
 messageReceived carries the payload back. Every node with a .msg.jsonl other
 than the sender is expected to receive every message.
 
-Exit status 0 when every message was accepted, did not error, and reached every
-receiver; 1 otherwise.
+What a sender's messages should come to is its group's `expect` in the manifest
+(plan.json): "delivered" (the default) -- accepted, no error, received by every
+other node; "error" -- every send refused or ended in messageError, and none
+received anywhere; "any" -- not judged. A send still without an outcome when
+the run ended (made in its last IN_FLIGHT_S seconds) is not judged either.
+
+Exit status 0 when every judged message came to what was expected; 1 otherwise.
 """
 import base64
 import glob
@@ -21,6 +26,18 @@ import json
 import os
 import sys
 from collections import Counter, defaultdict
+
+
+IN_FLIGHT_S = 60
+
+
+def expectations(d):
+    """node -> its group's `expect`, from the collect's plan.json."""
+    try:
+        with open(os.path.join(d, "plan.json")) as f:
+            return {s: g.get("expect", "delivered") for g in json.load(f) for s in g["services"]}
+    except (OSError, ValueError):
+        return {}
 
 
 def lines(path):
@@ -193,16 +210,26 @@ def main(d):
         print("no sends recorded (no *.send.jsonl): nothing to report")
         return 1
 
+    # Sends without an outcome when the run ended: no event of their own, and
+    # made within IN_FLIGHT_S of the last thing any node recorded.
+    end = max([s[2] for s in sends] + [t for r in rx.values() for t in r.values()])
+    in_flight = [s for s in sends if s[3] and not own[s[0]].get(s[3])
+                 and end - s[2] < IN_FLIGHT_S * 1e9]
+    sends = [s for s in sends if s not in in_flight]
+    expect = expectations(d)
+
     receivers = sorted(received)
     print(f"senders: {', '.join(sorted({s[0] for s in sends}))}; "
           f"nodes with an event log: {len(receivers)}")
-    print(f"messages: {len(sends)}")
+    print(f"messages: {len(sends)}"
+          + (f" (and {len(in_flight)} in flight when the run ended, not judged)" if in_flight else ""))
 
     refused = [s for s in sends if s[3] is None]
     errors, to_prop, to_sent, undelivered = [], [], [], []
     n_prop = n_sent = n_full = 0
     missed_by = Counter()
     per = defaultdict(Counter)  # sender -> outcome counts
+    unexpected = Counter()  # sender -> messages that did not come to its `expect`
     for sender, payload, t, rid, _ in sends:
         ev = own[sender].get(rid, {}) if rid else {}
         per[sender]["messages"] += 1
@@ -219,6 +246,12 @@ def main(d):
             n_sent += 1
             to_sent.append(ev["messageSent"][0] - t)
         missing = [r for r in receivers if r != sender and payload not in received[r]]
+        want = expect.get(sender, "delivered")
+        failed = rid is None or "messageError" in ev
+        if want == "delivered":
+            unexpected[sender] += failed or bool(missing)
+        elif want == "error":
+            unexpected[sender] += not failed or len(missing) < len(receivers) - (sender in receivers)
         if missing:
             undelivered.append((payload, missing))
             missed_by.update(missing)
@@ -261,7 +294,12 @@ def main(d):
     if total >= 50:
         long_run(d, sends, own, rx, hashes, receivers, to_prop)
 
-    ok = not refused and not errors and n_full == total
+    for s in sorted({s[0] for s in sends}):
+        want = expect.get(s, "delivered")
+        if want != "delivered" or unexpected[s]:
+            print(f"expected of {s}: {want}" + ("" if want == "any" else
+                  f"; {unexpected[s]} of {per[s]['messages']} messages came to something else"))
+    ok = not sum(unexpected.values())
     print("verdict:", "PASS" if ok else "FAIL")
     return 0 if ok else 1
 
